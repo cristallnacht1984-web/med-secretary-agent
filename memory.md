@@ -21,11 +21,11 @@
 | `tests/test_logging.py` | ✅ DONE | 19 тестов: JSON mode, request_id, masking, debug, rotation, level filter, stdlib bridge |
 | `tests/test_health.py` | ✅ DONE | 22 теста: все эндпоинты, edge cases, graceful shutdown, loop latency > 5.0 |
 | `tests/test_db.py` | ✅ DONE | 15 тестов: init_db, CRUD, дедупликация, cleanup, lifecycle дайджеста, reminder dedup, rollback |
+| `app/llm/prompts.py` | ✅ DONE | 3 строковые константы: NEWS_ANALYSIS_SYSTEM_PROMPT (725 симв), INTENT_CLASSIFICATION_SYSTEM_PROMPT (537 симв), REMINDER_SUMMARY_SYSTEM_PROMPT (429 симв). Автономный модуль, без внешних зависимостей |
 
 ### В работе (декомпозировано):
 | Модуль | Статус |
 |---|---|
-| `app/llm/prompts.py` (Задача 5a) | ⏳ СЛЕДУЮЩАЯ |
 | `app/llm/schemas.py` (Задача 5b) | ⬜ |
 | `app/llm/client.py` + `tests/test_llm.py` (Задача 5c) | ⬜ |
 
@@ -221,6 +221,10 @@ def handle_empty_string(cls, v):
 
 Каждая подзадача — отдельная сессия техлида.
 
+### 4.11 Protected files отсутствуют в workspace (Задача 5a)
+**Проблема:** файлы `app/config.py`, `app/logging_setup.py`, `app/health.py`, `app/db/`, а также тесты `tests/test_config.py`, `tests/test_logging.py`, `tests/test_health.py`, `tests/test_db.py` не синхронизированы в workspace техлида. Регрессионное тестирование `pytest tests/test_config.py tests/test_logging.py tests/test_health.py tests/test_db.py` невозможно.
+**Решение:** оркестратор должен обеспечить наличие protected files в workspace перед задачей 5c (где потребуется интеграция с Settings). Для задачи 5a это не блокирующая проблема, т.к. `app/llm/prompts.py` автономен.
+
 ---
 
 ## 5. ЧЕК-ЛИСТ ПРИЁМКИ ЗАДАЧИ (template отчёта техлида)
@@ -253,7 +257,7 @@ def handle_empty_string(cls, v):
 | 3 | Health check (aiohttp, 3 эндпоинта, graceful shutdown) | ✅ DONE | (см. Task 4) |
 | 4 | DB models + repository (SQLAlchemy 2.0, 3 модели, Repository) | ✅ DONE | `1dc10d78` |
 | 5 | LLM Service (полный модуль) | ❌ FAILED → декомпозировано | — |
-| 5a | `app/llm/prompts.py` | ⏳ СЛЕДУЮЩАЯ | — |
+| 5a | `app/llm/prompts.py` | ✅ DONE | `69ab93ab9a6aa4da2742fb40faa2b418efa93b5f` |
 | 5b | `app/llm/schemas.py` | ⬜ | — |
 | 5c | `app/llm/client.py` + тесты | ⬜ | — |
 | 6 | News Pipeline | ⬜ | — |
