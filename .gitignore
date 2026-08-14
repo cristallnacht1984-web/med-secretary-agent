@@ -1,0 +1,40 @@
+```
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.ENV
+.ENV.local
+.env
+.env.local
+.env.*
+.venv.bak/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Testing
+.coverage
+coverage/
+htmlcov/
+.nosetests
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+```
