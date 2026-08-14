@@ -13,6 +13,10 @@
 | `tests/test_config.py` | ✅ DONE | 21 тест + интеграционный test_logging_imports_settings, autouse фикстура clean_env_and_cache |
 | `tests/test_logging.py` | ✅ DONE | 8 тестов: JSON mode, request_id, masking, debug, rotation, level filter, stdlib bridge |
 | `tests/test_health.py` | ✅ DONE | 22 теста: все эндпоинты, edge cases, graceful shutdown, loop latency > 5.0 |
+| `app/db/models.py` | ✅ DONE | SQLAlchemy 2.0 DeclarativeBase: Article (url unique, title_hash index), DigestLog (status enum), ReminderLog (unique event_id+user_id). Таблицы: articles, digest_logs, reminder_logs |
+| `app/db/repository.py` | ✅ DONE | Async Repository: add_article, is_article_duplicate, cleanup_old_articles(7d), create_digest_log, mark_digest_sent, was_reminder_sent, mark_reminder_sent. Принимает AsyncSession |
+| `app/db/database.py` | ✅ DONE | Lazy engine init, async_sessionmaker, init_db(), get_session() (async generator), close_db(). DATABASE_URL из Settings |
+| `tests/test_db.py` | ✅ DONE | 15 тестов: init_db, CRUD, дедупликация, cleanup, lifecycle дайджеста, reminder dedup, rollback, mock init_db/get_session/close_db. In-memory SQLite |
 
 ## 2. МЕТОДОЛОГИЯ РАБОТЫ СЕССИИ (ТЕХЛИДА)
 
@@ -41,7 +45,7 @@
 - `ruff check .` = 0 ошибок
 - `git diff` защищённых файлов пустой
 - Архитектурная проверка: нет запрещённых импортов, нет хардкода, правильный паттерн async
-- Если всё ок — формирует ФИНАЛЬНЫЙ ОТЧЁТ оркестратору
+Если всё ок — формирует ФИНАЛЬНЫЙ ОТЧЁТ оркестратору
 
 ### Шаг 4: Фиксация результата
 Сессия ОБЯЗАТЕЛЬНО коммитит результат: `git add . && git commit -m "feat: Task N description"`
@@ -67,6 +71,13 @@
 - SQLAlchemy 2.0 async sessions, aiosqlite для SQLite
 - Repository-паттерн: модели отдельно, CRUD в отдельном классе
 - Для каждой операции с БД — отдельная транзакция (async with session.begin())
+
+**Детали реализации (Задача 4):**
+- Lazy инициализация engine через `_get_engine()` (вызывается при первом обращении, НЕ на module import)
+- `get_session()` — async generator для DI, автоматически commit/rollback
+- Тесты используют in-memory SQLite (`sqlite+aiosqlite:///:memory:`) с session-scoped engine
+- Составные индексы для быстрого поиска дубликатов: `(url, title_hash)`, `(event_id, user_id)`
+- Все datetime поля используют `DateTime(timezone=True)` + `datetime.now(timezone.utc)`
 
 ### 3.4 LLM (Qwen 3.6)
 - Все системные промпты как КОНСТАНТЫ в отдельном модуле `app/prompts.py`
