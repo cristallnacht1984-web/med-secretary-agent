@@ -1,0 +1,56 @@
+```
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.MF
+venv/
+env/
+ENV/
+.venv/
+env.bak/
+.ENV/
+.python-version
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.coverage.*
+.nox/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+```
