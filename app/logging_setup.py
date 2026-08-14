@@ -1,99 +1,127 @@
-"""Logging setup module for MedNews Secretary Agent using structlog."""
-
+"""Logging setup for MedNews Secretary Agent."""
 import logging
+from contextvars import ContextVar
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any
 
 import structlog
 from structlog.types import Processor
 
+# Request ID context variable
+_request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
+
 
 def new_request_id() -> str:
-    """Generate a unique request ID for tracking requests.
-    
-    Returns:
-        A unique string identifier for the request.
-
-    """
+    """Generate and bind a new request ID to the current context."""
     import uuid
-    return str(uuid.uuid4())
 
-
-def add_request_id(
-    logger: logging.Logger,
-    method_name: str,
-    event_dict: dict[str, Any],
-) -> dict[str, Any]:
-    """Add request_id to log events if not present.
-    
-    Args:
-        logger: The logger instance.
-        method_name: The logging method name (info, error, etc.).
-        event_dict: The event dictionary being logged.
-        
-    Returns:
-        Modified event dictionary with request_id added.
-
-    """
-    if "request_id" not in event_dict:
-        event_dict["request_id"] = new_request_id()
-    return event_dict
-
-
-def setup_logging(log_level: str = "INFO", log_file: str | None = None) -> None:
-    """Configure structlog for structured JSON logging.
-    
-    Args:
-        log_level: Logging level (DEBUG, INFO, WARNING, ERROR).
-        log_file: Optional path to log file. If None, logs to stdout only.
-
-    """
-    # Configure standard library logging
-    handlers: list[logging.Handler] = [logging.StreamHandler()]
-
-    if log_file:
-        log_path = Path(log_file)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_file)
-        handlers.append(file_handler)
-
-    logging.basicConfig(
-        format="%(message)s",
-        level=getattr(logging, log_level.upper(), logging.INFO),
-        handlers=handlers,
-    )
-
-    # Configure structlog processors
-    shared_processors: list[Processor] = [
-        structlog.contextvars.merge_contextvars,
-        structlog.processors.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso"),
-        add_request_id,
-        structlog.processors.dict_tracebacks,
-    ]
-
-    structlog.configure(
-        processors=[
-            *shared_processors,
-            structlog.processors.JSONRenderer(),
-        ],
-        wrapper_class=structlog.make_filtering_bound_logger(
-            getattr(logging, log_level.upper(), logging.INFO)
-        ),
-        context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
-        cache_logger_on_first_use=True,
-    )
+    rid = str(uuid.uuid4())
+    _request_id.set(rid)
+    return rid
 
 
 def get_logger(name: str) -> structlog.BoundLogger:
-    """Get a structured logger instance.
-    
-    Args:
-        name: Logger name (typically module name).
-        
-    Returns:
-        Bound structlog logger instance.
-
-    """
+    """Get a structured logger instance."""
     return structlog.get_logger(name)
+
+
+def _mask_sensitive(value: str) -> str:
+    """Mask sensitive substrings in a string value."""
+    sensitive_patterns = [
+        "api_key",
+        "token",
+        "password",
+        "secret",
+        "authorization",
+        "credentials",
+    ]
+    lower_value = value.lower()
+    for pattern in sensitive_patterns:
+        if pattern in lower_value:
+            return "***MASKED***"
+    return value
+
+
+def mask_secrets(
+    logger: logging.Logger, method_name: str, event_dict: structlog.types.EventDict
+) -> structlog.types.EventDict:
+    """Mask sensitive data in log event dict."""
+    for key, value in list(event_dict.items()):
+        if isinstance(value, str):
+            masked = _mask_sensitive(value)
+            if masked != value:
+                event_dict[key] = masked
+    return event_dict
+
+
+def add_request_id(
+    logger: logging.Logger, method_name: str, event_dict: structlog.types.EventDict
+) -> structlog.types.EventDict:
+    """Add request_id from context to log event."""
+    rid = _request_id.get()
+    if rid is not None:
+        event_dict["request_id"] = rid
+    return event_dict
+
+
+def setup_logging() -> None:
+    """Configure structlog with JSON output and rotating file handler."""
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    log_file = log_dir / "mednews.log"
+
+    # Create rotating file handler (5MB, 5 backups)
+    file_handler = RotatingFileHandler(
+        log_file, maxBytes=5 * 1024 * 1024, backupCount=5
+    )
+    file_handler.setLevel(logging.DEBUG)
+
+    # Console handler for development
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+
+    # Shared processors (no wrap_for_formatter here)
+    shared_processors: list[Processor] = [
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        structlog.processors.TimeStamper(fmt="iso"),
+        add_request_id,
+        mask_secrets,
+        structlog.processors.dict_tracebacks,
+    ]
+
+    # Final processor chain for structlog
+    structlog.configure(
+        processors=[
+            *shared_processors,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(logging.DEBUG),
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+
+    # Formatter for file handler
+    file_formatter = structlog.stdlib.ProcessorFormatter(
+        processor=structlog.processors.JSONRenderer(),
+        foreign_pre_chain=shared_processors,
+    )
+    file_handler.setFormatter(file_formatter)
+
+    # Formatter for console handler
+    console_formatter = structlog.stdlib.ProcessorFormatter(
+        processor=structlog.dev.ConsoleRenderer(),
+        foreign_pre_chain=shared_processors,
+    )
+    console_handler.setFormatter(console_formatter)
+
+    # Root logger configuration
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
+
+    # Suppress noisy loggers
+    logging.getLogger("aiosqlite").setLevel(logging.WARNING)
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
