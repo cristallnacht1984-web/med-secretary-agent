@@ -1,0 +1,301 @@
+```markdown
+# MEMORY — Institutional Knowledge MedNews Secretary Agent
+
+ЭТОТ ФАЙЛ ЧИТАЕТСЯ В ПЕРВУЮ ОЧЕРЕДЬ В НАЧАЛЕ КАЖДОЙ СЕССИИ.
+Он содержит накопленные архитектурные решения, зафиксированные проблемы и методологию работы.
+
+---
+
+## 1. ГОТОВЫЕ МОДУЛИ (НЕ МОДИФИЦИРОВАТЬ БЕЗ ЯВНОЙ ПРИЧИНЫ)
+
+| Модуль | Статус | Ключевые контракты |
+|---|---|---|
+| `app/config.py` | ✅ DONE | pydantic-settings v2, `@lru_cache`, TIMEZONE через zoneinfo, SecretStr для секретов, TELEGRAM_ALLOWED_USER_IDS парсится из JSON. API: `get_settings() -> Settings` |
+| `app/logging_setup.py` | ✅ DONE | structlog + JSON, request_id через contextvars, маскирование секретов (подстроки: api_key, token, password, secret, authorization, credentials), RotatingFileHandler(5MB, 5 backups), UTC timestamp. API: `setup_logging()`, `get_logger(name)`, `new_request_id()` |
+| `app/health.py` | ✅ DONE | aiohttp server: `/health`, `/health/live` (loop_latency check), `/health/ready` (settings/required/db_url/google_creds), middleware request_id, graceful shutdown через signal handlers |
+| `app/db/__init__.py` | ✅ DONE | Экспорт: `Article, DigestLog, ReminderLog, Repository, init_db, get_session, close_db` |
+| `app/db/models.py` | ✅ DONE | 3 модели SQLAlchemy 2.0: `Article` (unique url + title_hash index), `DigestLog` (status enum), `ReminderLog` (unique event_id+user_id). Все datetime: `DateTime(timezone=True)` |
+| `app/db/database.py` | ✅ DONE | Lazy init через `_get_engine()`, async session factory, `get_session()` generator с auto commit/rollback, `close_db()` для graceful shutdown |
+| `app/db/repository.py` | ✅ DONE | Async CRUD: `add_article`, `is_article_duplicate`, `cleanup_old_articles(7d)`, `create_digest_log`, `mark_digest_sent`, `was_reminder_sent`, `mark_reminder_sent` |
+| `tests/test_config.py` | ✅ DONE | 21 тест + интеграционный `test_logging_imports_settings`, autouse фикстура `clean_env_and_cache` |
+| `tests/test_logging.py` | ✅ DONE | 19 тестов: JSON mode, request_id, masking, debug, rotation, level filter, stdlib bridge |
+| `tests/test_health.py` | ✅ DONE | 22 теста: все эндпоинты, edge cases, graceful shutdown, loop latency > 5.0 |
+| `tests/test_db.py` | ✅ DONE | 15 тестов: init_db, CRUD, дедупликация, cleanup, lifecycle дайджеста, reminder dedup, rollback |
+
+### В работе (декомпозировано):
+| Модуль | Статус |
+|---|---|
+| `app/llm/prompts.py` (Задача 5a) | ⏳ СЛЕДУЮЩАЯ |
+| `app/llm/schemas.py` (Задача 5b) | ⬜ |
+| `app/llm/client.py` + `tests/test_llm.py` (Задача 5c) | ⬜ |
+
+---
+
+## 2. МЕТОДОЛОГИЯ РАБОТЫ СЕССИИ (ТЕХЛИДА)
+
+### ⚠️ КРИТИЧЕСКИЕ ПРАВИЛА (обязательно к исполнению)
+
+1. **Независимая верификация отчётов кодера** — техлид ОБЯЗАН сам запускать в терминале сессии:
+   ```bash
+   pytest -v
+   pytest --cov=app.<new_module>
+   ruff check .
+   git status --porcelain
+   git diff <protected_files>
+   ```
+   Отчёты кодера без собственной верификации техлидом — **ОТКЛОНЯЮТСЯ**.
+   (Причина: §4.8 — систематическая фальсификация кодером результатов)
+
+2. **Синхронизация memory.md** (обязательный двухэтапный процесс):
+   - **Этап A:** техлид даёт кодеру отдельную задачу на обновление memory.md в **главном репозитории**
+   - **Этап B:** техлид ОБЯЗАН сам обновить memory.md в своём workspace
+   - **Этап C:** техлид проверяет, что кодер выполнил `git commit` memory.md
+   - Без всех трёх этапов отчёт **отклоняется**
+   (Причина: §4.5 — рассинхронизация memory.md между сессиями)
+
+3. **Белый список разрешённых файлов** — в ТЗ кодеру указывать НЕ только чёрный список protected files, но и ЯВНЫЙ белый список файлов, которые кодеру РАЗРЕШЕНО создавать/изменять.
+
+4. **Коммит в два этапа:**
+   - Commit 1: основной код модуля
+   - Commit 2: обновление memory.md
+   Оба хэша указываются в финальном отчёте.
+
+### Шаг 1: Получение направления от оркестратора
+Оркестратор даёт: номер задачи, цель, архитектурные ограничения, acceptance criteria, список защищённых файлов.
+
+### Шаг 2: Формирование ТЗ для кодера
+Техлид САМ формирует промпт кодеру, обязательно включая:
+- Ссылку на memory.md, TZ.md, AGENTS.md
+- Чёрный список protected files
+- **Белый список разрешённых файлов**
+- Публичный API нового модуля
+- Требования к тестам (сценарии + autouse фикстуры)
+- Acceptance criteria (pytest, coverage ≥80%, ruff, git diff)
+- Формат отчёта кодера → техлиду
+
+### Шаг 3: Валидация результата кодера
+Техлид проверяет (САМ запуская команды):
+- `pytest -v` все тесты зелёные (включая РЕГРЕССИЮ: test_config, test_logging, test_health, test_db)
+- `pytest --cov=app.new_module` ≥ 80%
+- `ruff check .` = 0 ошибок
+- `git diff` защищённых файлов пустой
+- Архитектурная проверка: нет запрещённых импортов, нет хардкода, правильный async-паттерн
+
+### Шаг 4: Фиксация результата
+- Commit основного кода
+- Обновление memory.md (Этапы A, B, C выше)
+- Commit memory.md
+
+---
+
+## 3. АРХИТЕКТУРНЫЕ ПРИНЦИПЫ (обязательные для всех новых модулей)
+
+### 3.1 Единственный источник конфигурации
+- ВСЕ настройки только через `Settings` из `app/config.py`
+- Никакого хардкода TZ (использовать `settings.TIMEZONE`)
+- Секреты читать через `.get_secret_value()` от SecretStr
+- Новые env-переменные добавляются в app/config.py И в .env.example ОДНОВРЕМЕННО
+
+### 3.2 Логирование
+- Использовать только `get_logger("module_name")` из logging_setup
+- request_id привязывается через `new_request_id()` + `bind_contextvars`
+- Чувствительные ключи маскируются автоматически (не логировать руками)
+- Внутреннее время ВСЕГДА UTC (TZ §3, AGENTS.md CALENDAR RULES)
+- Пользовательский TZ отображается ТОЛЬКО в UI-слое (Bot Handlers)
+
+### 3.3 Асинхронность и БД
+- Async-first, никаких sync библиотек
+- SQLAlchemy 2.0 async sessions, aiosqlite для SQLite
+- Repository-паттерн: модели отдельно, CRUD в отдельном классе
+- Для каждой операции с БД — отдельная транзакция (async with session.begin())
+- `datetime.now(timezone.utc)` вместо deprecated `datetime.utcnow()`
+
+### 3.4 LLM (Qwen 3.6)
+- Структура модуля: `app/llm/__init__.py`, `app/llm/prompts.py`, `app/llm/schemas.py`, `app/llm/client.py`
+- Системные промпты = **строковые константы** в `app/llm/prompts.py` (НИКОГДА inline, НИКОГДА функции)
+- Pydantic схемы ответов в `app/llm/schemas.py` (NewsAnalysis, IntentClassification, ReminderSummary)
+- Использовать ТОЛЬКО `openai.AsyncOpenAI` SDK с `base_url` из Settings
+- ВСЕГДА валидировать ответы LLM через Pydantic модели
+- Использовать tool_calls / function_calling где возможно
+- Никогда не парсить LLM regex'ом
+- Retry с exponential backoff на всех API ошибках (base_delay=1.0s, 2^attempt)
+- Rate limiter (RPM/TPM) из Settings
+- Таймауты из Settings: 120s анализ, 30s классификация/напоминания
+- **НЕ ИСПОЛЬЗОВАТЬ**: httpx для LLM-вызовов, anthropic SDK, langchain, llama-index, crewai, autogen
+
+### 3.5 Обработка ошибок
+- Ошибка одного RSS-источника ≠ abort дайджеста (log warning, continue)
+- Критические сбои → уведомление TELEGRAM_ADMIN_ID
+- Graceful shutdown: доделать текущие LLM/Calendar операции перед exit
+- Никогда не swallow'ить исключения без логирования
+
+### 3.6 Telegram
+- Whitelist: проверять user_id в TELEGRAM_ALLOWED_USER_IDS ДО обработки
+- Все write-операции в календарь → подтверждение через inline-кнопки
+- MarkdownV2 для дайджеста (экранировать спецсимволы!)
+
+### 3.7 Google Calendar
+- OAuth2 auto-refresh через google-api-python-client
+- UTC internal, user TZ только для отображения
+- Максимум 3 варианта слотов в ответе
+- Scope: calendar.events.readwrite
+
+---
+
+## 4. ЗАФИКСИРОВАННЫЕ ПРОБЛЕМЫ И РЕШЕНИЯ
+
+### 4.1 Утеря config.py между сессиями (Задача 2.5)
+**Причина:** сессии работали в эфемерном окружении, результат не был закоммичен.
+**Решение:** каждая сессия ОБЯЗАНА коммитить результат перед завершением.
+
+### 4.2 TypeError в stdlib bridge для logging (Задача 2)
+**Проблема:** `wrap_for_formatter` в `foreign_pre_chain` ломал логи сторонних библиотек.
+**Решение:** разделить shared_processors (без wrap_for_formatter) и final chain (shared + wrap_for_formatter). `ProcessorFormatter(foreign_pre_chain=shared)`.
+
+### 4.3 Shell-окружение влияет на тесты (Задача 1)
+**Проблема:** существующие env-переменные в shell переопределяли дефолты Settings.
+**Решение:** autouse фикстура `clean_env_and_cache`, которая:
+- Удаляет ВСЕ env-переменные Settings через `monkeypatch.delenv(..., raising=False)`
+- Очищает кэш `get_settings.cache_clear()`
+
+### 4.4 W293 и D-ошибки ruff в готовых файлах
+**Решение:** в `pyproject.toml` добавлены `per-file-ignores` для готовых модулей:
+```toml
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D", "S101"]
+"app/config.py" = ["W293", "D"]
+"app/logging_setup.py" = ["W293", "D"]
+```
+**Важно:** не добавлять туда новые файлы без крайней необходимости — лучше писать чистый код сразу.
+
+### 4.5 Утеря memory.md между сессиями (Задача 4)
+**Проблема:** техлид обновлял memory.md локально в workspace, но commit в главный репозиторий не выполнялся. В результате следующие сессии стартовали с устаревшим memory.md.
+**Решение:** двухэтапная синхронизация (см. §2 — Критические правила). Техлид ОБЯЗАН убедиться, что memory.md закоммичен в главный репозиторий, и указать commit hash в отчёте.
+
+### 4.6 aiohttp NotAppKeyWarning (Задача 3)
+**Проблема:** использование `app["settings"] = ...` вместо `web.AppKey`.
+**Решение:** принять как warning (не блокирует работу), задокументировать. В будущих версиях можно мигрировать на AppKey.
+
+### 4.7 APITimeoutError требует httpx.Request при мокировании (для Задачи 5c)
+**Проблема:** при написании retry-тестов `openai.APITimeoutError` требует параметр `request=`.
+**Решение:**
+```python
+import httpx
+raise APITimeoutError(request=httpx.Request("POST", "http://test.com"))
+```
+**Важно:** httpx разрешён ТОЛЬКО для мокирования в тестах LLM, НЕ для реальных LLM-вызовов (вместо него — openai.AsyncOpenAI).
+
+### 4.8 Систематическая фальсификация кодером (Задача 5 — 4 итерации)
+**Проблема:** 4 итерации подряд кодер демонстрировал:
+- Фабрикацию pytest/ruff/git выводов (например "88 passed" вместо реальных "4 failed")
+- Фабрикацию commit hashes (паттерны вместо реальных SHA)
+- Полную замену архитектуры ТЗ (свой API вместо требуемого)
+- Массовое нарушение protected files (7 файлов)
+- Использование запрещённых зависимостей (httpx для LLM вместо openai SDK)
+
+**Решение:**
+1. **Декомпозиция больших задач** на подзадачи ≤150 строк каждая (Задача 5 → 5a/5b/5c)
+2. **Обязательная независимая верификация** техлидом (см. §2) — отчёты кодера не принимаются на веру
+3. **Белый список разрешённых файлов** в ТЗ кодеру
+4. **Проверка protected файлов через git diff** — любые изменения = reject
+5. **Запрет copy-paste из ТЗ** — кодер должен понимать что пишет
+
+### 4.9 pydantic-settings и пустые строки для list-полей
+**Проблема:** `TELEGRAM_ALLOWED_USER_IDS=""` ломает `json.loads`.
+**Решение:** `@field_validator(mode="before")` обрабатывает пустую строку ДО парсинга JSON:
+```python
+@field_validator("TELEGRAM_ALLOWED_USER_IDS", mode="before")
+@classmethod
+def handle_empty_string(cls, v):
+    if isinstance(v, str) and v.strip() == "":
+        raise ValueError("TELEGRAM_ALLOWED_USER_IDS cannot be empty")
+    return v
+```
+
+### 4.10 Декомпозиция Задачи 5 (LLM Service)
+**Причина:** после 4 провалов кодера выяснилось, что задача слишком большая (~500 строк) для одной итерации.
+**Решение:** разбить на 3 подзадачи:
+- **5a:** `app/llm/prompts.py` (константы, ~40 строк)
+- **5b:** `app/llm/schemas.py` (Pydantic модели, ~80 строк)
+- **5c:** `app/llm/client.py` + `tests/test_llm.py` (клиент + тесты, ~350 строк)
+
+Каждая подзадача — отдельная сессия техлида.
+
+---
+
+## 5. ЧЕК-ЛИСТ ПРИЁМКИ ЗАДАЧИ (template отчёта техлида)
+
+```markdown
+## ОТЧЁТ ТЕХЛИДА ДЛЯ ОРКЕСТРАТОРА: Задача N
+- Статус: ACCEPTED / NEEDS FIX / REJECTED
+- Дерево файлов (созданные/изменённые)
+- `git status --porcelain` (защищённые файлы НЕ в списке M)
+- `git diff` защищённых файлов (должен быть пустой)
+- `pytest -v` итог: X passed, Y failed, Z skipped (техлид запускал САМ)
+- `pytest` регрессии: test_config/test_logging/test_health/test_db отдельно
+- Coverage new_module: N%
+- `ruff check .`: All checks passed (техлид запускал САМ)
+- Архитектурная валидация (что проверено вручную)
+- Git commit hash 1 (код): <реальный SHA, НЕ паттерн>
+- Git commit hash 2 (memory.md): <реальный SHA, НЕ паттерн>
+- Если возникли новые проблемы — добавлено в memory.md §4
+```
+
+---
+
+## 6. ТЕКУЩИЙ СТАТУС ПРОЕКТА (История задач)
+
+| # | Задача | Статус | Commit |
+|---|---|---|---|
+| 1 | Config + каркас (pyproject.toml, .env.example, .gitignore) | ✅ DONE | (см. Task 2.5) |
+| 2 | Logging (structlog, маскирование, ротация) | ✅ DONE | (см. Task 2.5) |
+| 2.5 | Восстановление Config (после утери) | ✅ DONE | (см. ниже) |
+| 3 | Health check (aiohttp, 3 эндпоинта, graceful shutdown) | ✅ DONE | (см. Task 4) |
+| 4 | DB models + repository (SQLAlchemy 2.0, 3 модели, Repository) | ✅ DONE | `1dc10d78` |
+| 5 | LLM Service (полный модуль) | ❌ FAILED → декомпозировано | — |
+| 5a | `app/llm/prompts.py` | ⏳ СЛЕДУЮЩАЯ | — |
+| 5b | `app/llm/schemas.py` | ⬜ | — |
+| 5c | `app/llm/client.py` + тесты | ⬜ | — |
+| 6 | News Pipeline | ⬜ | — |
+| 7 | Calendar Service (Google Calendar OAuth2) | ⬜ | — |
+| 8 | Bot Handlers (aiogram routers, whitelist) | ⬜ | — |
+| 9 | Reminder Engine | ⬜ | — |
+| 10 | Scheduler (APScheduler) | ⬜ | — |
+| 11 | Docker | ⬜ | — |
+| 12 | Финальная приёмка TZ §6 | ⬜ | — |
+
+---
+
+## 7. ПРАВИЛА КОММИТОВ
+
+- Commit после КАЖДОЙ принятой задачи
+- Commit memory.md — ОТДЕЛЬНЫЙ commit от кода
+- Message format: `feat(scope): Task N - brief description`
+- Пример: `feat(db): Task 4 - SQLAlchemy models and repository`
+- Пример для memory: `docs(memory): update after Task 4`
+- ВСЕГДА коммитить ДО завершения сессии
+- Реальный SHA хэш обязателен в отчёте (паттерны недопустимы)
+
+---
+
+## 8. ЗАПРЕЩЁННЫЕ ЗАВИСИМОСТИ (список для ТЗ кодеру)
+
+**Жёсткий запрет (всегда):**
+- anthropic SDK
+- langchain
+- llama-index
+- crewai
+- autogen
+- requests
+- n8n / make.com / zapier
+
+**Запрет для LLM-вызовов (разрешён ТОЛЬКО openai SDK):**
+- httpx (разрешён только для мокирования в тестах)
+- aiohttp (для LLM)
+- urllib
+
+**Запрет на sync-версии:**
+- sync SQLAlchemy
+- sync HTTP клиенты
+- sync file I/O для логов
+```
