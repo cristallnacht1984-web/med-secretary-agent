@@ -1,18 +1,41 @@
-```
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
-*.so
+venv/
+.venv/
+.env
+.env.local
+
+# Build artifacts
+build/
+dist/
 *.egg-info/
 
-# Coverage
+# Testing
 .coverage
 coverage/
 htmlcov/
-
-# Tests
 .pytest_cache/
-```
+.mypy_cache/
+
+# Logs
+logs/
+*.log
+
+# Data and secrets
+data/
+secrets/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp

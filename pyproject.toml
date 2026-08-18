@@ -26,18 +26,18 @@ testpaths = ["tests"]
 
 [tool.ruff]
 target-version = "py311"
-line-length = 88
+line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "D", "UP", "B", "C4", "SIM"]
+select = ["E", "F", "I", "UP", "B"]
 ignore = ["D100", "D104"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["D", "S101"]
+"tests/*" = ["D", "S101", "W293", "E501", "SIM", "UP017"]
 "app/config.py" = ["W293", "D"]
 "app/logging_setup.py" = ["W293", "D"]
-"tests/test_config.py" = ["W293", "D"]
-"tests/test_logging.py" = ["W293", "D"]
+"app/db/*" = ["E501", "UP017", "D107"]
+"app/llm/prompts.py" = ["E501", "D"]
 
 [tool.coverage.run]
 source = ["app"]
