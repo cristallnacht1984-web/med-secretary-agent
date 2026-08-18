@@ -221,7 +221,31 @@ def handle_empty_string(cls, v):
 
 Каждая подзадача — отдельная сессия техлида.
 
-### 4.11 Protected files отсутствуют в workspace (Задача 5a)
+### 4.11 Фундамент восстановлен, но имеет отличия от TZ (Задача 0)
+
+**Проблема:** опубликованные модули (Задачи 3, 4, 5a) были написаны на основе
+фактического фундамента, а не строго по TZ. Текущий config.py и logging_setup.py
+работают (80 тестов проходят), но отличаются от спецификации TZ:
+
+| Спецификация TZ | Факт в текущем коде |
+|---|---|
+| `TIMEZONE` с zoneinfo валидацией | `USER_TIMEZONE` (default "UTC"), без zoneinfo |
+| `LOG_LEVEL` с валидатором | Отсутствует |
+| `TELEGRAM_DIGEST_CHAT_ID` | Отсутствует |
+| `NEWS_BATCH_MIN/MAX` + model_validator | Отсутствуют |
+| `field_validator` для пустой строки ALLOWED_USER_IDS (§4.9) | Отсутствует |
+| `GOOGLE_CREDENTIALS_FILE` (Path) | `GOOGLE_CREDENTIALS_JSON` (str) |
+| `DIGEST_HOUR`, `DIGEST_MINUTE` | `DIGEST_TIME_HOUR` |
+| `LOG_FILE`, `LOG_LEVEL` | Отсутствуют (логирование захардкожено) |
+
+**Решение:** принять текущее состояние как "де-факто фундамент". Принцип
+"приоритет = реальная работоспособность репозитория" превалирует. Исправление
+отличий — отдельной задачей после завершения основного pipeline.
+
+**Важно:** при создании новых модулей использовать ФАКТИЧЕСКИЕ поля Settings
+(из app/config.py), а не поля из TZ. Таблица фактических полей — в .env.example.
+
+### 4.12 Protected files отсутствуют в workspace (Задача 5a)
 **Проблема:** файлы `app/config.py`, `app/logging_setup.py`, `app/health.py`, `app/db/`, а также тесты `tests/test_config.py`, `tests/test_logging.py`, `tests/test_health.py`, `tests/test_db.py` не синхронизированы в workspace техлида. Регрессионное тестирование `pytest tests/test_config.py tests/test_logging.py tests/test_health.py tests/test_db.py` невозможно.
 **Решение:** оркестратор должен обеспечить наличие protected files в workspace перед задачей 5c (где потребуется интеграция с Settings). Для задачи 5a это не блокирующая проблема, т.к. `app/llm/prompts.py` автономен.
 
@@ -251,6 +275,7 @@ def handle_empty_string(cls, v):
 
 | # | Задача | Статус | Commit |
 |---|---|---|---|
+| 0 | Восстановление фундамента (config + logging) | ✅ DONE | (см. ниже) |
 | 1 | Config + каркас (pyproject.toml, .env.example, .gitignore) | ✅ DONE | (см. Task 2.5) |
 | 2 | Logging (structlog, маскирование, ротация) | ✅ DONE | (см. Task 2.5) |
 | 2.5 | Восстановление Config (после утери) | ✅ DONE | (см. ниже) |
@@ -258,7 +283,7 @@ def handle_empty_string(cls, v):
 | 4 | DB models + repository (SQLAlchemy 2.0, 3 модели, Repository) | ✅ DONE | `1dc10d78` |
 | 5 | LLM Service (полный модуль) | ❌ FAILED → декомпозировано | — |
 | 5a | `app/llm/prompts.py` | ✅ DONE | `69ab93ab9a6aa4da2742fb40faa2b418efa93b5f` |
-| 5b | `app/llm/schemas.py` | ⬜ | — |
+| 5b | `app/llm/schemas.py` | ⏳ СЛЕДУЮЩАЯ | — |
 | 5c | `app/llm/client.py` + тесты | ⬜ | — |
 | 6 | News Pipeline | ⬜ | — |
 | 7 | Calendar Service (Google Calendar OAuth2) | ⬜ | — |
