@@ -27,7 +27,7 @@
 ### В работе (декомпозировано):
 | Модуль | Статус |
 |---|---|
-| `app/llm/schemas.py` (Задача 5b) | ⬜ |
+| `app/llm/schemas.py` (Задача 5b) | ✅ DONE |
 | `app/llm/client.py` + `tests/test_llm.py` (Задача 5c) | ⬜ |
 
 ---
@@ -276,7 +276,7 @@ Legacy-поля (DIGEST_TIME_HOUR, USER_TIMEZONE, GOOGLE_CREDENTIALS_JSON, REMIN
 | 4 | DB models + repository (SQLAlchemy 2.0, 3 модели, Repository) | ✅ DONE | `1dc10d78` |
 | 5 | LLM Service (полный модуль) | ❌ FAILED → декомпозировано | — |
 | 5a | `app/llm/prompts.py` | ✅ DONE | `69ab93ab9a6aa4da2742fb40faa2b418efa93b5f` |
-| 5b | `app/llm/schemas.py` | ⏳ СЛЕДУЮЩАЯ | — |
+| 5b | `app/llm/schemas.py` | ✅ DONE | 13a8b80bf76f507b76019e90033fd84ab79895c2 |
 | 5c | `app/llm/client.py` + тесты | ⬜ | — |
 | 6 | News Pipeline | ⬜ | — |
 | 7 | Calendar Service (Google Calendar OAuth2) | ⬜ | — |
