@@ -10,7 +10,7 @@
 
 | Модуль | Статус | Ключевые контракты |
 |---|---|---|
-| `app/config.py` | ✅ DONE | pydantic-settings v2, `@lru_cache`, TIMEZONE через zoneinfo, SecretStr для секретов, TELEGRAM_ALLOWED_USER_IDS парсится из JSON. API: `get_settings() -> Settings` |
+| `app/config.py` | ✅ DONE | pydantic-settings v2, `@lru_cache`, TIMEZONE через zoneinfo, SecretStr для секретов, TELEGRAM_ALLOWED_USER_IDS парсится из JSON (NoDecode), canonical поля TZ (§6): TELEGRAM_DIGEST_CHAT_ID (required), DIGEST_HOUR/MINUTE, TIMEZONE, LOG_LEVEL, LOG_FILE; News Pipeline: NEWS_LOOKBACK_HOURS, NEWS_DEDUP_WINDOW_DAYS, NEWS_BATCH_MIN/MAX, NEWS_DELIVERY_*, FETCH_*; LLM: LLM_BASE_URL, LLM_API_KEY, LLM_MODEL_NAME, LLM_MAX_TOKENS, LLM_TIMEOUT_*, LLM_TEMPERATURE_*, LLM_RATE_LIMIT_*, LLM_MAX_RETRIES; Calendar/Reminders: GOOGLE_CREDENTIALS_FILE, GOOGLE_TOKEN_FILE, GOOGLE_CALENDAR_ID, REMINDER_POLL_INTERVAL_MINUTES, REMINDER_LOOKAHEAD_MINUTES. API: `get_settings() -> Settings` |
 | `app/logging_setup.py` | ✅ DONE | structlog + JSON, request_id через contextvars, маскирование секретов (подстроки: api_key, token, password, secret, authorization, credentials), RotatingFileHandler(5MB, 5 backups), UTC timestamp. API: `setup_logging()`, `get_logger(name)`, `new_request_id()` |
 | `app/health.py` | ✅ DONE | aiohttp server: `/health`, `/health/live` (loop_latency check), `/health/ready` (settings/required/db_url/google_creds), middleware request_id, graceful shutdown через signal handlers |
 | `app/db/__init__.py` | ✅ DONE | Экспорт: `Article, DigestLog, ReminderLog, Repository, init_db, get_session, close_db` |
@@ -223,27 +223,18 @@ def handle_empty_string(cls, v):
 
 ### 4.11 Фундамент восстановлен, но имеет отличия от TZ (Задача 0)
 
-**Проблема:** опубликованные модули (Задачи 3, 4, 5a) были написаны на основе
-фактического фундамента, а не строго по TZ. Текущий config.py и logging_setup.py
-работают (80 тестов проходят), но отличаются от спецификации TZ:
+**Решение:** Задача 0.5 выполнена — `app/config.py` расширен до полного соответствия TZ §6.
+Добавлены canonical поля: TELEGRAM_DIGEST_CHAT_ID (required), DIGEST_HOUR, DIGEST_MINUTE,
+TIMEZONE (с валидацией zoneinfo), LOG_LEVEL (с валидатором), LOG_FILE; News Pipeline поля;
+LLM поля (BASE_URL, API_KEY, MODEL_NAME, MAX_TOKENS, TIMEOUT_*, TEMPERATURE_*, RATE_LIMIT_*, MAX_RETRIES);
+Calendar/Reminders поля (GOOGLE_CREDENTIALS_FILE, GOOGLE_TOKEN_FILE, GOOGLE_CALENDAR_ID,
+REMINDER_POLL_INTERVAL_MINUTES, REMINDER_LOOKAHEAD_MINUTES).
+Реализован валидатор пустой строки для TELEGRAM_ALLOWED_USER_IDS (§4.9) через NoDecode.
+Legacy-поля (DIGEST_TIME_HOUR, USER_TIMEZONE, GOOGLE_CREDENTIALS_JSON, REMINDER_WINDOW_HOURS)
+сохранены для обратной совместимости. Все 80+ тестов зелёные, coverage ≥95%.
 
-| Спецификация TZ | Факт в текущем коде |
-|---|---|
-| `TIMEZONE` с zoneinfo валидацией | `USER_TIMEZONE` (default "UTC"), без zoneinfo |
-| `LOG_LEVEL` с валидатором | Отсутствует |
-| `TELEGRAM_DIGEST_CHAT_ID` | Отсутствует |
-| `NEWS_BATCH_MIN/MAX` + model_validator | Отсутствуют |
-| `field_validator` для пустой строки ALLOWED_USER_IDS (§4.9) | Отсутствует |
-| `GOOGLE_CREDENTIALS_FILE` (Path) | `GOOGLE_CREDENTIALS_JSON` (str) |
-| `DIGEST_HOUR`, `DIGEST_MINUTE` | `DIGEST_TIME_HOUR` |
-| `LOG_FILE`, `LOG_LEVEL` | Отсутствуют (логирование захардкожено) |
-
-**Решение:** принять текущее состояние как "де-факто фундамент". Принцип
-"приоритет = реальная работоспособность репозитория" превалирует. Исправление
-отличий — отдельной задачей после завершения основного pipeline.
-
-**Важно:** при создании новых модулей использовать ФАКТИЧЕСКИЕ поля Settings
-(из app/config.py), а не поля из TZ. Таблица фактических полей — в .env.example.
+**Важно:** новые модули используют только canonical поля из TZ §6. Legacy-поля — только для
+обратной совместимости со старым кодом.
 
 ### 4.12 Protected files отсутствуют в workspace (Задача 5a)
 **Проблема:** файлы `app/config.py`, `app/logging_setup.py`, `app/health.py`, `app/db/`, а также тесты `tests/test_config.py`, `tests/test_logging.py`, `tests/test_health.py`, `tests/test_db.py` не синхронизированы в workspace техлида. Регрессионное тестирование `pytest tests/test_config.py tests/test_logging.py tests/test_health.py tests/test_db.py` невозможно.
@@ -276,6 +267,7 @@ def handle_empty_string(cls, v):
 | # | Задача | Статус | Commit |
 |---|---|---|---|
 | 0 | Восстановление фундамента (config + logging) | ✅ DONE | (см. ниже) |
+| 0.5 | Аддитивное расширение config.py до TZ §6 | ✅ DONE | `7e69cde` |
 | 1 | Config + каркас (pyproject.toml, .env.example, .gitignore) | ✅ DONE | (см. Task 2.5) |
 | 2 | Logging (structlog, маскирование, ротация) | ✅ DONE | (см. Task 2.5) |
 | 2.5 | Восстановление Config (после утери) | ✅ DONE | (см. ниже) |
