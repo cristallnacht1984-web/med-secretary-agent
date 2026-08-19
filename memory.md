@@ -24,6 +24,7 @@
 | `app/llm/prompts.py` | ✅ DONE | 3 строковые константы: NEWS_ANALYSIS_SYSTEM_PROMPT (725 симв), INTENT_CLASSIFICATION_SYSTEM_PROMPT (537 симв), REMINDER_SUMMARY_SYSTEM_PROMPT (429 симв). Автономный модуль, без внешних зависимостей |
 | `app/llm/schemas.py` | ✅ DONE | Pydantic v2 модели LLM-ответов (синхронны с prompts.py): `NewsAnalysis` (article_url, region Literal["Америка","Европа","Россия","Азия","Глобал"], source, essence, significance Literal["High","Medium","Low"], scientific_summary_ru — все str min_length=1), `NewsAnalysisBatch` (articles: 3–5), `IntentClassification` (intent Literal["find_slots","create_event","update_event","cancel_event","set_reminder","other"], confidence 0.0–1.0, parameters dict default_factory=dict), `ReminderSummary` (event_title, event_start datetime ISO 8601, summary, preparation_tips list[str]\|None). API: импорт через `app.llm` |
 | `app/llm/client.py` | ✅ DONE | Async-клиент Qwen 3.6 через OpenAI-compatible API: `LLMClient`, `analyze_news_batch`, `classify_intent`, `summarize_reminder`, `aclose`. Использует `openai.AsyncOpenAI`, retry с exponential backoff, rate-limit (RPM/TPM), Pydantic-валидация ответов. |
+| `app/services/rss_fetcher.py` | ✅ DONE | Async RSS fetch 10 feeds (TZ App А), aiohttp+feedparser, retry/backoff (3 attempts, 1s base), graceful failure (source failure ≠ digest abort), RawArticle dataclass, UTC filtering. API: `fetch_all_feeds(lookback_hours=24)`, `fetch_single_feed(url, source, region)`, `RawArticle`, `FeedFetchError`, `RSS_FEEDS` |
 
 ### В работе (декомпозировано):
 | Модуль | Статус |
@@ -279,6 +280,7 @@ Legacy-поля (DIGEST_TIME_HOUR, USER_TIMEZONE, GOOGLE_CREDENTIALS_JSON, REMIN
 | 5a | `app/llm/prompts.py` | ✅ DONE | `69ab93ab9a6aa4da2742fb40faa2b418efa93b5f` |
 | 5b | `app/llm/schemas.py` | ✅ DONE | 13a8b80bf76f507b76019e90033fd84ab79895c2 |
 | 5c | `app/llm/client.py` + тесты | ✅ DONE | 86316d41d83612016e628815cae0861cfb606d98 |
+| 6a | `app/services/rss_fetcher.py` | ✅ DONE | 029a8a75f7bc6e9e1bb810d0c0e958d96b6767ad |
 | 6 | News Pipeline | ⬜ | — |
 | 7 | Calendar Service (Google Calendar OAuth2) | ⬜ | — |
 | 8 | Bot Handlers (aiogram routers, whitelist) | ⬜ | — |

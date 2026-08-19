@@ -1,27 +1,23 @@
 ```
-# Python cache
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.Python
+env/
+venv/
+.venv/
+.ENV
+.ENV.*
+.venv.bak/
+env.bak/
 
-# Distribution / packaging
-*.egg-info/
-*.egg
-dist/
-build/
-*.so
-
-# Testing
-.pytest_cache/
-
-# Logs
-*.log
-
-# Environment variables
-.env
-.env.local
-.env.*
+# Coverage
+.coverage
+coverage/
+htmlcov/
+.coverage.*
 
 # IDE
 .vscode/
@@ -29,7 +25,15 @@ build/
 *.swp
 *.swo
 
-# OS generated files
+# OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+.env.*
 ```
