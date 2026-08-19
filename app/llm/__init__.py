@@ -1,5 +1,6 @@
 """LLM-модуль MedNews Secretary Agent."""
 
+from app.llm.client import LLMClient
 from app.llm.prompts import (
     INTENT_CLASSIFICATION_SYSTEM_PROMPT,
     NEWS_ANALYSIS_SYSTEM_PROMPT,
@@ -15,6 +16,7 @@ from app.llm.schemas import (
 __all__ = [
     "INTENT_CLASSIFICATION_SYSTEM_PROMPT",
     "IntentClassification",
+    "LLMClient",
     "NEWS_ANALYSIS_SYSTEM_PROMPT",
     "NewsAnalysis",
     "NewsAnalysisBatch",
