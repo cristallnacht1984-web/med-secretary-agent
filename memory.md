@@ -22,6 +22,7 @@
 | `tests/test_health.py` | ✅ DONE | 22 теста: все эндпоинты, edge cases, graceful shutdown, loop latency > 5.0 |
 | `tests/test_db.py` | ✅ DONE | 15 тестов: init_db, CRUD, дедупликация, cleanup, lifecycle дайджеста, reminder dedup, rollback |
 | `app/llm/prompts.py` | ✅ DONE | 3 строковые константы: NEWS_ANALYSIS_SYSTEM_PROMPT (725 симв), INTENT_CLASSIFICATION_SYSTEM_PROMPT (537 симв), REMINDER_SUMMARY_SYSTEM_PROMPT (429 симв). Автономный модуль, без внешних зависимостей |
+| `app/llm/schemas.py` | ✅ DONE | Pydantic v2 модели LLM-ответов (синхронны с prompts.py): `NewsAnalysis` (article_url, region Literal["Америка","Европа","Россия","Азия","Глобал"], source, essence, significance Literal["High","Medium","Low"], scientific_summary_ru — все str min_length=1), `NewsAnalysisBatch` (articles: 3–5), `IntentClassification` (intent Literal["find_slots","create_event","update_event","cancel_event","set_reminder","other"], confidence 0.0–1.0, parameters dict default_factory=dict), `ReminderSummary` (event_title, event_start datetime ISO 8601, summary, preparation_tips list[str]\|None). API: импорт через `app.llm` |
 
 ### В работе (декомпозировано):
 | Модуль | Статус |
