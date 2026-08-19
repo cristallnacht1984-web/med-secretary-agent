@@ -10,6 +10,7 @@ app/db/models.py
 app/db/repository.py
 app/llm/__init__.py
 app/llm/prompts.py
+app/llm/schemas.py
 mednews_secretary_agent.egg-info/PKG-INFO
 mednews_secretary_agent.egg-info/SOURCES.txt
 mednews_secretary_agent.egg-info/dependency_links.txt
@@ -18,5 +19,6 @@ mednews_secretary_agent.egg-info/top_level.txt
 tests/test_config.py
 tests/test_db.py
 tests/test_health.py
+tests/test_llm_schemas.py
 tests/test_logging.py
 tests/test_prompts.py
