@@ -27,12 +27,14 @@
 | `app/services/rss_fetcher.py` | ✅ DONE | Async RSS fetch 10 feeds (TZ App А), aiohttp+feedparser, retry/backoff (3 attempts, 1s base), graceful failure (source failure ≠ digest abort), RawArticle dataclass, UTC filtering. API: `fetch_all_feeds(lookback_hours=24)`, `fetch_single_feed(url, source, region)`, `RawArticle`, `FeedFetchError`, `RSS_FEEDS` |
 | `app/services/news_pipeline.py` | ✅ DONE | News Pipeline: дедупликация по URL+title_hash (MD5), окно 7 дней, батчи NEWS_BATCH_MIN/MAX (3–5). API: `deduplicate_articles(articles) -> list[RawArticle]`, `build_batches(articles) -> list[list[RawArticle]]`, `prepare_batches_for_analysis(lookback_hours=24) -> list[list[dict]]`. Graceful degradation при ошибке БД → return [] + log error. |
 | `app/services/digest_builder.py` | ✅ DONE | Digest Builder: финальный модуль News Pipeline. API: `build_digest_message(lookback_hours=24, client: LLMClient | None = None) -> str`, `format_digest_markdown(analyses: list[NewsAnalysisBatch], date: datetime) -> str`, `escape_markdown_v2(text: str) -> str`, `send_digest_to_telegram(chat_id: int, message: str, bot: Bot | None = None) -> int`. MarkdownV2-форматирование, retry-логика доставки, graceful failure на LLM-ошибках, DB-логирование. |
+| `app/services/calendar_service.py` | ✅ DONE (Task 7a) | Calendar Service OAuth2: аутентификация Google Calendar API через OAuth2, auto-refresh токенов. API: `CalendarService(settings)`, `authenticate()`, `_get_service()`, `CalendarAuthError`. Scope: `calendar.events.readwrite`. Async-first с `asyncio.to_thread()` для sync Google SDK. |
 
 ### В работе (декомпозировано):
 | Модуль | Статус |
 |---|---|
 | `app/llm/schemas.py` (Задача 5b) | ✅ DONE |
 | `app/llm/client.py` + `tests/test_llm.py` (Задача 5c) | ✅ DONE |
+| `app/services/calendar_service.py` + `tests/test_calendar_service.py` (Задача 7a) | ✅ DONE |
 
 ---
 
