@@ -2,8 +2,9 @@
 import asyncio
 import json
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -524,3 +525,205 @@ class CalendarService:
                     extra={"request_id": request_id},
                 )
             raise
+
+    def _convert_utc_to_user_tz(self, utc_dt: datetime) -> datetime:
+        """Convert UTC datetime to user timezone.
+
+        Args:
+            utc_dt: UTC datetime (naive or aware). Naive is assumed UTC.
+
+        Returns:
+            Datetime in user timezone (aware).
+        """
+        user_tz = ZoneInfo(str(self._settings.TIMEZONE))
+        # If naive, assume UTC
+        if utc_dt.tzinfo is None:
+            utc_dt = utc_dt.replace(tzinfo=UTC)
+        return utc_dt.astimezone(user_tz)
+
+    def _convert_user_tz_to_utc(self, user_dt: datetime) -> datetime:
+        """Convert user timezone datetime to UTC.
+
+        Args:
+            user_dt: User TZ datetime (naive or aware). Naive is assumed user TZ.
+
+        Returns:
+            Datetime in UTC (aware).
+        """
+        user_tz = ZoneInfo(str(self._settings.TIMEZONE))
+        # If naive, assume user TZ
+        if user_dt.tzinfo is None:
+            user_dt = user_dt.replace(tzinfo=user_tz)
+        return user_dt.astimezone(UTC)
+
+    def _format_for_display(self, utc_dt: datetime) -> str:
+        """Format UTC datetime for display in user timezone.
+
+        Args:
+            utc_dt: UTC datetime (aware).
+
+        Returns:
+            Formatted string like "HH:MM Europe/Moscow".
+        """
+        user_tz_name = str(self._settings.TIMEZONE)
+        user_dt = self._convert_utc_to_user_tz(utc_dt)
+        return f"{user_dt:%H:%M} {user_tz_name}"
+
+    async def find_available_slots(
+        self,
+        date: datetime,
+        duration_minutes: int = 60,
+        max_slots: int = 3,
+        working_hours: tuple[int, int] = (9, 18),
+    ) -> list[dict]:
+        """Find available time slots in the calendar for a given date.
+
+        Args:
+            date: Date to search for slots (used with working_hours to define window).
+            duration_minutes: Duration of each slot in minutes.
+            max_slots: Maximum number of slots to return.
+            working_hours: Tuple of (start_hour, end_hour) in user timezone.
+
+        Returns:
+            List of dicts with keys: start, end (UTC datetimes),
+            start_display, end_display (formatted strings).
+            Empty list on API failure after retries.
+        """
+        request_id = new_request_id()
+        user_tz = ZoneInfo(str(self._settings.TIMEZONE))
+
+        try:
+            # Build working window in user TZ
+            if date.tzinfo is None:
+                date = date.replace(tzinfo=user_tz)
+            else:
+                date = date.astimezone(user_tz)
+
+            window_start = date.replace(hour=working_hours[0], minute=0, second=0, microsecond=0)
+            window_end = date.replace(hour=working_hours[1], minute=0, second=0, microsecond=0)
+
+            # Convert to UTC for API call
+            time_min_utc = self._convert_user_tz_to_utc(window_start)
+            time_max_utc = self._convert_user_tz_to_utc(window_end)
+
+            # Format for Google Calendar API (RFC3339)
+            time_min_str = time_min_utc.isoformat().replace("+00:00", "Z")
+            time_max_str = time_max_utc.isoformat().replace("+00:00", "Z")
+
+            service = await self._get_service()
+
+            events_list = []
+
+            def _list_events():
+                return (
+                    service.events()
+                    .list(
+                        calendarId=self._settings.GOOGLE_CALENDAR_ID,
+                        timeMin=time_min_str,
+                        timeMax=time_max_str,
+                        singleEvents=True,
+                        orderBy="startTime",
+                    )
+                    .execute()
+                )
+
+            result = await self._retry_with_backoff(_list_events)
+            events_list = result.get("items", [])
+
+            # Parse events into intervals (clamped to working window)
+            busy_intervals = []
+            for event in events_list:
+                start_raw = event.get("start", {})
+                end_raw = event.get("end", {})
+
+                # Skip all-day events (no dateTime key)
+                if "dateTime" not in start_raw or "dateTime" not in end_raw:
+                    self._logger.debug(
+                        "Skipping all-day event",
+                        extra={"request_id": request_id, "event_id": event.get("id")},
+                    )
+                    continue
+
+                # Parse datetimes (may have Z or offset)
+                event_start = datetime.fromisoformat(start_raw["dateTime"].replace("Z", "+00:00"))
+                event_end = datetime.fromisoformat(end_raw["dateTime"].replace("Z", "+00:00"))
+
+                # Convert to UTC if needed
+                if event_start.tzinfo is not None:
+                    event_start = event_start.astimezone(UTC)
+                if event_end.tzinfo is not None:
+                    event_end = event_end.astimezone(UTC)
+
+                # Clamp to working window
+                clamped_start = max(event_start, time_min_utc)
+                clamped_end = min(event_end, time_max_utc)
+
+                if clamped_start < clamped_end:
+                    busy_intervals.append((clamped_start, clamped_end))
+
+            # Merge overlapping intervals
+            if busy_intervals:
+                busy_intervals.sort(key=lambda x: x[0])
+                merged = [busy_intervals[0]]
+                for current_start, current_end in busy_intervals[1:]:
+                    last_start, last_end = merged[-1]
+                    if current_start <= last_end:
+                        # Overlapping - merge
+                        merged[-1] = (last_start, max(last_end, current_end))
+                    else:
+                        merged.append((current_start, current_end))
+                busy_intervals = merged
+
+            # Find free slots
+            free_slots = []
+            current_time = time_min_utc
+            duration_td = timedelta(minutes=duration_minutes)
+
+            for busy_start, busy_end in busy_intervals:
+                # Gap before this busy interval
+                while current_time + duration_td <= busy_start and len(free_slots) < max_slots:
+                    slot_end = current_time + duration_td
+                    free_slots.append(
+                        {
+                            "start": current_time,
+                            "end": slot_end,
+                            "start_display": self._format_for_display(current_time),
+                            "end_display": self._format_for_display(slot_end),
+                        }
+                    )
+                    current_time = slot_end
+
+                # Move past this busy interval
+                current_time = max(current_time, busy_end)
+
+            # After last busy interval, fill remaining slots
+            while current_time + duration_td <= time_max_utc and len(free_slots) < max_slots:
+                slot_end = current_time + duration_td
+                free_slots.append(
+                    {
+                        "start": current_time,
+                        "end": slot_end,
+                        "start_display": self._format_for_display(current_time),
+                        "end_display": self._format_for_display(slot_end),
+                    }
+                )
+                current_time = slot_end
+
+            self._logger.info(
+                f"Found {len(free_slots)} available slots",
+                extra={"request_id": request_id},
+            )
+            return free_slots
+
+        except CalendarAPIError as e:
+            self._logger.warning(
+                f"Failed to find available slots: {e}",
+                extra={"request_id": request_id},
+            )
+            return []
+        except Exception as e:
+            self._logger.warning(
+                f"Unexpected error finding available slots: {e}",
+                extra={"request_id": request_id},
+            )
+            return []

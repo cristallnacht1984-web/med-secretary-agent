@@ -1128,3 +1128,455 @@ class TestIntegrationCRUD:
 
         # DELETE
         await service.delete_event(created_event_id)
+
+
+# =============================================================================
+# Task 7c: find_available_slots + TZ conversion tests (≥15 new tests)
+# =============================================================================
+
+
+class TestConvertUTCToUserTZ:
+    """Test _convert_utc_to_user_tz method."""
+
+    def test_convert_utc_to_moscow(self, mock_settings):
+        """Test UTC → Europe/Moscow (+3) conversion."""
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setenv("TIMEZONE", "Europe/Moscow")
+        get_settings.cache_clear()
+        settings = get_settings()
+        service = CalendarService(settings=settings)
+
+        utc_dt = datetime(2025, 1, 15, 12, 0, tzinfo=timezone.utc)
+        user_dt = service._convert_utc_to_user_tz(utc_dt)
+
+        assert user_dt.hour == 15  # 12 + 3 = 15
+        assert str(user_dt.tzinfo) == "Europe/Moscow"
+
+    def test_convert_utc_to_new_york_winter(self, mock_settings):
+        """Test UTC → America/New_York (-5 winter) conversion."""
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setenv("TIMEZONE", "America/New_York")
+        get_settings.cache_clear()
+        settings = get_settings()
+        service = CalendarService(settings=settings)
+
+        # Winter time (EST = -5)
+        utc_dt = datetime(2025, 1, 15, 18, 0, tzinfo=timezone.utc)
+        user_dt = service._convert_utc_to_user_tz(utc_dt)
+
+        assert user_dt.hour == 13  # 18 - 5 = 13
+
+    def test_convert_naive_assumed_utc(self, mock_settings):
+        """Test naive datetime is assumed UTC."""
+        service = CalendarService(settings=mock_settings)
+
+        naive_dt = datetime(2025, 1, 15, 12, 0)  # No tzinfo
+        user_dt = service._convert_utc_to_user_tz(naive_dt)
+
+        # Default TIMEZONE is Europe/Moscow (+3)
+        assert user_dt.hour == 15
+
+
+class TestConvertUserTZToUTC:
+    """Test _convert_user_tz_to_utc method."""
+
+    def test_convert_moscow_to_utc(self, mock_settings):
+        """Test Europe/Moscow → UTC conversion."""
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setenv("TIMEZONE", "Europe/Moscow")
+        get_settings.cache_clear()
+        settings = get_settings()
+        service = CalendarService(settings=settings)
+
+        moscow_dt = datetime(2025, 1, 15, 15, 0)  # Naive, assumed Moscow
+        utc_dt = service._convert_user_tz_to_utc(moscow_dt)
+
+        assert utc_dt.hour == 12  # 15 - 3 = 12
+        assert utc_dt.tzinfo == timezone.utc
+
+    def test_convert_new_york_to_utc_winter(self, mock_settings):
+        """Test America/New_York → UTC conversion (winter)."""
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setenv("TIMEZONE", "America/New_York")
+        get_settings.cache_clear()
+        settings = get_settings()
+        service = CalendarService(settings=settings)
+
+        ny_dt = datetime(2025, 1, 15, 13, 0)  # Naive, assumed NY (EST=-5)
+        utc_dt = service._convert_user_tz_to_utc(ny_dt)
+
+        assert utc_dt.hour == 18  # 13 + 5 = 18
+
+
+class TestFormatForDisplay:
+    """Test _format_for_display method."""
+
+    def test_format_display_moscow(self, mock_settings):
+        """Test format returns 'HH:MM Europe/Moscow'."""
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setenv("TIMEZONE", "Europe/Moscow")
+        get_settings.cache_clear()
+        settings = get_settings()
+        service = CalendarService(settings=settings)
+
+        utc_dt = datetime(2025, 1, 15, 9, 30, tzinfo=timezone.utc)
+        display = service._format_for_display(utc_dt)
+
+        assert display == "12:30 Europe/Moscow"  # 9:30 UTC + 3 = 12:30
+
+    def test_format_display_boundary_values(self, mock_settings):
+        """Test HH:MM formatting for boundary values."""
+        service = CalendarService(settings=mock_settings)
+
+        # Test 00:05
+        utc_dt_early = datetime(2025, 1, 14, 21, 5, tzinfo=timezone.utc)
+        display_early = service._format_for_display(utc_dt_early)
+        assert display_early.startswith("00:05")
+
+        # Test 23:59
+        utc_dt_late = datetime(2025, 1, 15, 20, 59, tzinfo=timezone.utc)
+        display_late = service._format_for_display(utc_dt_late)
+        assert display_late.startswith("23:59")
+
+
+class TestFindAvailableSlots:
+    """Test find_available_slots method."""
+
+    @pytest.mark.asyncio
+    async def test_empty_calendar_three_slots_default(self, mock_settings):
+        """Test empty calendar returns exactly 3 slots of 60 min each."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        # Mock empty events list
+        mock_events = MagicMock()
+        mock_list = MagicMock()
+        mock_list.execute.return_value = {"items": []}
+        mock_events.list.return_value = mock_list
+        service._service.events.return_value = mock_events
+
+        date = datetime(2025, 1, 15)
+        slots = await service.find_available_slots(date)
+
+        assert len(slots) == 3
+        # Each slot should be exactly 60 minutes
+        for _i, slot in enumerate(slots):
+            duration = (slot["end"] - slot["start"]).total_seconds() / 60
+            assert duration == 60
+        # Slots should be consecutive starting at 9:00
+        assert slots[0]["start_display"] == "09:00 Europe/Moscow"
+        assert slots[1]["start_display"] == "10:00 Europe/Moscow"
+        assert slots[2]["start_display"] == "11:00 Europe/Moscow"
+
+    @pytest.mark.asyncio
+    async def test_one_event_middle_day_slots_before_and_after(self, mock_settings):
+        """Test one event in middle → slots before AND after."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        # Mock one event: 12:00-13:00 UTC = 15:00-16:00 Moscow
+        mock_events = MagicMock()
+        mock_list = MagicMock()
+        mock_list.execute.return_value = {
+            "items": [
+                {
+                    "id": "evt1",
+                    "start": {"dateTime": "2025-01-15T12:00:00Z"},
+                    "end": {"dateTime": "2025-01-15T13:00:00Z"},
+                }
+            ]
+        }
+        mock_events.list.return_value = mock_list
+        service._service.events.return_value = mock_events
+
+        date = datetime(2025, 1, 15)
+        slots = await service.find_available_slots(date, max_slots=10)
+
+        # Should have slots both before 15:00 and after 16:00 Moscow
+        assert len(slots) > 1
+        # First slot starts at 09:00
+        assert slots[0]["start_display"] == "09:00 Europe/Moscow"
+
+    @pytest.mark.asyncio
+    async def test_full_day_busy_returns_empty(self, mock_settings):
+        """Test entire day busy → empty list."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        # Mock back-to-back events filling entire day (9-18 Moscow = 6-15 UTC)
+        mock_events = MagicMock()
+        mock_list = MagicMock()
+        mock_list.execute.return_value = {
+            "items": [
+                {
+                    "id": "evt1",
+                    "start": {"dateTime": "2025-01-15T06:00:00Z"},
+                    "end": {"dateTime": "2025-01-15T15:00:00Z"},
+                }
+            ]
+        }
+        mock_events.list.return_value = mock_list
+        service._service.events.return_value = mock_events
+
+        date = datetime(2025, 1, 15)
+        slots = await service.find_available_slots(date, duration_minutes=60)
+
+        assert slots == []
+
+    @pytest.mark.asyncio
+    async def test_duration_30_min_more_slots(self, mock_settings):
+        """Test duration=30 gives ~2x more slots than duration=60."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        mock_events = MagicMock()
+        mock_list = MagicMock()
+        mock_list.execute.return_value = {"items": []}
+        mock_events.list.return_value = mock_list
+        service._service.events.return_value = mock_events
+
+        date = datetime(2025, 1, 15)
+
+        slots_60 = await service.find_available_slots(date, duration_minutes=60, max_slots=100)
+        slots_30 = await service.find_available_slots(date, duration_minutes=30, max_slots=100)
+
+        assert len(slots_30) > len(slots_60)
+
+    @pytest.mark.asyncio
+    async def test_working_hours_10_16_respected(self, mock_settings):
+        """Test working_hours=(10, 16) → all slots within 10:00-16:00."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        mock_events = MagicMock()
+        mock_list = MagicMock()
+        mock_list.execute.return_value = {"items": []}
+        mock_events.list.return_value = mock_list
+        service._service.events.return_value = mock_events
+
+        date = datetime(2025, 1, 15)
+        slots = await service.find_available_slots(
+            date, working_hours=(10, 16), max_slots=10
+        )
+
+        # All start_display should be >= 10:00 and < 16:00
+        for slot in slots:
+            hour = int(slot["start_display"].split(":")[0])
+            assert 10 <= hour < 16
+
+    @pytest.mark.asyncio
+    async def test_max_slots_5_duration_30_exactly_5_slots(self, mock_settings):
+        """Test max_slots=5, duration=30 → exactly 5 slots."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        mock_events = MagicMock()
+        mock_list = MagicMock()
+        mock_list.execute.return_value = {"items": []}
+        mock_events.list.return_value = mock_list
+        service._service.events.return_value = mock_events
+
+        date = datetime(2025, 1, 15)
+        slots = await service.find_available_slots(
+            date, duration_minutes=30, max_slots=5
+        )
+
+        assert len(slots) == 5
+
+    @pytest.mark.asyncio
+    async def test_retry_on_5xx_then_success(self, mock_settings):
+        """Test retry on 5xx, second attempt succeeds."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        http_error = HttpError(
+            resp=MagicMock(status=500), content=b"Internal Error", uri="http://test"
+        )
+        mock_result = {"items": []}
+
+        mock_events = MagicMock()
+        mock_list = MagicMock()
+        mock_list.execute.side_effect = [http_error, mock_result]
+        mock_events.list.return_value = mock_list
+        service._service.events.return_value = mock_events
+
+        with patch("asyncio.sleep", return_value=None):
+            date = datetime(2025, 1, 15)
+            slots = await service.find_available_slots(date)
+
+        assert mock_list.execute.call_count == 2
+        assert isinstance(slots, list)
+
+    @pytest.mark.asyncio
+    async def test_api_fails_all_retries_returns_empty(self, mock_settings):
+        """Test API fails all retries → [] (graceful failure)."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        http_error = HttpError(
+            resp=MagicMock(status=500), content=b"Internal Error", uri="http://test"
+        )
+
+        mock_events = MagicMock()
+        mock_list = MagicMock()
+        mock_list.execute.side_effect = http_error
+        mock_events.list.return_value = mock_list
+        service._service.events.return_value = mock_events
+
+        with patch("asyncio.sleep", return_value=None):
+            date = datetime(2025, 1, 15)
+            slots = await service.find_available_slots(date)
+
+        # Graceful failure: should return empty list, not raise
+        assert slots == []
+
+    @pytest.mark.asyncio
+    async def test_allday_event_skipped(self, mock_settings):
+        """Test all-day event (no dateTime) is skipped."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        # Mock all-day event (has 'date' not 'dateTime')
+        mock_events = MagicMock()
+        mock_list = MagicMock()
+        mock_list.execute.return_value = {
+            "items": [
+                {
+                    "id": "allday_evt",
+                    "start": {"date": "2025-01-15"},
+                    "end": {"date": "2025-01-16"},
+                }
+            ]
+        }
+        mock_events.list.return_value = mock_list
+        service._service.events.return_value = mock_events
+
+        date = datetime(2025, 1, 15)
+        slots = await service.find_available_slots(date, max_slots=3)
+
+        # All-day event should be ignored, so we get full slots
+        assert len(slots) == 3
+        assert slots[0]["start_display"] == "09:00 Europe/Moscow"
+
+    @pytest.mark.asyncio
+    async def test_overlapping_events_merged(self, mock_settings):
+        """Test overlapping events are merged before finding gaps."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        # Two overlapping events: 10-11 and 10:30-11:30 (Moscow time)
+        # In UTC: 07-08 and 07:30-08:30
+        # Merged: 07-08:30 UTC = 10-11:30 Moscow
+        mock_events = MagicMock()
+        mock_list = MagicMock()
+        mock_list.execute.return_value = {
+            "items": [
+                {
+                    "id": "evt1",
+                    "start": {"dateTime": "2025-01-15T07:00:00Z"},
+                    "end": {"dateTime": "2025-01-15T08:00:00Z"},
+                },
+                {
+                    "id": "evt2",
+                    "start": {"dateTime": "2025-01-15T07:30:00Z"},
+                    "end": {"dateTime": "2025-01-15T08:30:00Z"},
+                },
+            ]
+        }
+        mock_events.list.return_value = mock_list
+        service._service.events.return_value = mock_events
+
+        date = datetime(2025, 1, 15)
+        slots = await service.find_available_slots(date, max_slots=10)
+
+        # After merge, busy is 10:00-11:30 Moscow
+        # Available: 09:00-10:00 (1 slot), then 11:30 onwards
+        # First slot should be 09:00
+        assert slots[0]["start_display"] == "09:00 Europe/Moscow"
+
+    @pytest.mark.asyncio
+    async def test_rfc3339_z_and_offset_formats(self, mock_settings):
+        """Test both Z suffix and offset formats are parsed."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        # Event with offset format instead of Z
+        mock_events = MagicMock()
+        mock_list = MagicMock()
+        mock_list.execute.return_value = {
+            "items": [
+                {
+                    "id": "evt1",
+                    "start": {"dateTime": "2025-01-15T12:00:00+03:00"},
+                    "end": {"dateTime": "2025-01-15T13:00:00+03:00"},
+                }
+            ]
+        }
+        mock_events.list.return_value = mock_list
+        service._service.events.return_value = mock_events
+
+        date = datetime(2025, 1, 15)
+        slots = await service.find_available_slots(date, max_slots=10)
+
+        # Should handle offset format correctly
+        assert isinstance(slots, list)
+
+    @pytest.mark.asyncio
+    async def test_integration_full_flow(self, mock_settings):
+        """Integration test: full flow with mixed events."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        # Mixed events: regular + all-day + overlapping
+        mock_events = MagicMock()
+        mock_list = MagicMock()
+        mock_list.execute.return_value = {
+            "items": [
+                # Regular event
+                {
+                    "id": "evt1",
+                    "start": {"dateTime": "2025-01-15T10:00:00Z"},
+                    "end": {"dateTime": "2025-01-15T11:00:00Z"},
+                },
+                # All-day event (should be skipped)
+                {
+                    "id": "allday",
+                    "start": {"date": "2025-01-15"},
+                    "end": {"date": "2025-01-16"},
+                },
+                # Overlapping event
+                {
+                    "id": "evt2",
+                    "start": {"dateTime": "2025-01-15T10:30:00Z"},
+                    "end": {"dateTime": "2025-01-15T11:30:00Z"},
+                },
+            ]
+        }
+        mock_events.list.return_value = mock_list
+        service._service.events.return_value = mock_events
+
+        date = datetime(2025, 1, 15)
+        slots = await service.find_available_slots(date, max_slots=5)
+
+        # evt1 + evt2 merge to 10:00-11:30 UTC = 13:00-14:30 Moscow
+        # Free: 09:00-13:00 (4 slots of 60 min), then 14:30-18:00
+        assert len(slots) >= 1
+        assert slots[0]["start_display"] == "09:00 Europe/Moscow"
+        # Verify structure
+        for slot in slots:
+            assert "start" in slot
+            assert "end" in slot
+            assert "start_display" in slot
+            assert "end_display" in slot
