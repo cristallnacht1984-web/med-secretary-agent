@@ -133,11 +133,12 @@ class TestDeduplicateArticles:
         mock_repo.is_article_duplicate = AsyncMock(return_value=False)
         mock_repo.add_article = AsyncMock()
 
-        with patch("app.services.news_pipeline.get_session") as mock_get_session:
+        # Mock get_session as an async generator
+        async def mock_get_session_gen():
             mock_session = AsyncMock()
-            mock_get_session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+            yield mock_session
 
+        with patch("app.services.news_pipeline.get_session", side_effect=mock_get_session_gen):
             with patch("app.services.news_pipeline.Repository", return_value=mock_repo):
                 result = await deduplicate_articles(articles)
 
@@ -171,11 +172,12 @@ class TestDeduplicateArticles:
         mock_repo.is_article_duplicate = AsyncMock(side_effect=is_dup_side_effect)
         mock_repo.add_article = AsyncMock()
 
-        with patch("app.services.news_pipeline.get_session") as mock_get_session:
+        # Mock get_session as an async generator
+        async def mock_get_session_gen():
             mock_session = AsyncMock()
-            mock_get_session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+            yield mock_session
 
+        with patch("app.services.news_pipeline.get_session", side_effect=mock_get_session_gen):
             with patch("app.services.news_pipeline.Repository", return_value=mock_repo):
                 result = await deduplicate_articles(articles)
 
@@ -195,11 +197,12 @@ class TestDeduplicateArticles:
         """Database error should return empty list (graceful degradation)."""
         articles = [_make_article("http://a.com", "Title A")]
 
-        with patch("app.services.news_pipeline.get_session") as mock_get_session:
-            # Simulate database error
-            mock_get_session.return_value.__aenter__ = AsyncMock(side_effect=Exception("DB error"))
-            mock_get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+        # Mock get_session to raise an exception
+        async def mock_get_session_gen():
+            raise Exception("DB error")
+            yield  # Make it a generator
 
+        with patch("app.services.news_pipeline.get_session", side_effect=mock_get_session_gen):
             result = await deduplicate_articles(articles)
 
         assert result == []
@@ -214,11 +217,12 @@ class TestDeduplicateArticles:
         mock_repo.is_article_duplicate = AsyncMock(return_value=False)
         mock_repo.add_article = AsyncMock()
 
-        with patch("app.services.news_pipeline.get_session") as mock_get_session:
+        # Mock get_session as an async generator
+        async def mock_get_session_gen():
             mock_session = AsyncMock()
-            mock_get_session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+            yield mock_session
 
+        with patch("app.services.news_pipeline.get_session", side_effect=mock_get_session_gen):
             with patch("app.services.news_pipeline.Repository", return_value=mock_repo):
                 await deduplicate_articles([article])
 

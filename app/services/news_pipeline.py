@@ -11,6 +11,7 @@ from structlog import get_logger
 from app.config import get_settings
 from app.db.database import get_session
 from app.db.repository import Repository
+from app.logging_setup import new_request_id
 from app.services.rss_fetcher import RawArticle, fetch_all_feeds
 
 
@@ -34,11 +35,13 @@ async def deduplicate_articles(articles: list[RawArticle]) -> list[RawArticle]:
         List of unique articles (duplicates removed).
         Empty list if database error occurs (graceful degradation).
     """
+    request_id = new_request_id()
     logger = get_logger("news")
     unique_articles: list[RawArticle] = []
 
     try:
-        async with get_session() as session:
+        # get_session is an async generator, use async for to get the session
+        async for session in get_session():
             repo = Repository(session)
 
             for article in articles:
@@ -59,7 +62,11 @@ async def deduplicate_articles(articles: list[RawArticle]) -> list[RawArticle]:
                 else:
                     logger.debug(
                         "Duplicate article skipped",
-                        extra={"url": article.url, "title": article.title[:50]},
+                        extra={
+                            "url": article.url,
+                            "title": article.title[:50],
+                            "request_id": request_id,
+                        },
                     )
 
         logger.info(
@@ -68,6 +75,7 @@ async def deduplicate_articles(articles: list[RawArticle]) -> list[RawArticle]:
                 "input_count": len(articles),
                 "unique_count": len(unique_articles),
                 "duplicates_removed": len(articles) - len(unique_articles),
+                "request_id": request_id,
             },
         )
         return unique_articles
@@ -75,7 +83,7 @@ async def deduplicate_articles(articles: list[RawArticle]) -> list[RawArticle]:
     except Exception as e:
         logger.error(
             "Database error during deduplication - returning empty list",
-            extra={"error": str(e)},
+            extra={"error": str(e), "request_id": request_id},
         )
         # Graceful degradation: return empty list, don't crash pipeline
         return []
@@ -145,36 +153,37 @@ async def prepare_batches_for_analysis(lookback_hours: int = 24) -> list[list[di
         url, title, content, source
         Ready for LLM client consumption.
     """
+    request_id = new_request_id()
     logger = get_logger("news")
     logger.info(
         "Starting prepare_batches_for_analysis",
-        extra={"lookback_hours": lookback_hours},
+        extra={"lookback_hours": lookback_hours, "request_id": request_id},
     )
 
     # Step 1: Fetch RSS feeds
     raw_articles = await fetch_all_feeds(lookback_hours=lookback_hours)
 
     if not raw_articles:
-        logger.warning("No articles fetched from RSS feeds")
+        logger.warning("No articles fetched from RSS feeds", extra={"request_id": request_id})
         return []
 
     logger.info(
         "Fetched articles from RSS",
-        extra={"count": len(raw_articles)},
+        extra={"count": len(raw_articles), "request_id": request_id},
     )
 
     # Step 2: Deduplicate
     unique_articles = await deduplicate_articles(raw_articles)
 
     if not unique_articles:
-        logger.warning("No unique articles after deduplication")
+        logger.warning("No unique articles after deduplication", extra={"request_id": request_id})
         return []
 
     # Step 3: Build batches
     batches = build_batches(unique_articles)
 
     if not batches:
-        logger.warning("No batches built")
+        logger.warning("No batches built", extra={"request_id": request_id})
         return []
 
     # Step 4: Convert to dict format for LLM
@@ -196,6 +205,7 @@ async def prepare_batches_for_analysis(lookback_hours: int = 24) -> list[list[di
         extra={
             "batch_count": len(result),
             "total_articles": sum(len(b) for b in result),
+            "request_id": request_id,
         },
     )
 
