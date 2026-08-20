@@ -1,4 +1,5 @@
 """Services package for MedNews Secretary Agent."""
+from app.services.calendar_service import CalendarAuthError, CalendarService
 from app.services.digest_builder import (
     REGION_EMOJI,
     DigestDeliveryError,
@@ -35,4 +36,6 @@ __all__ = [
     "escape_markdown_v2",
     "format_digest_markdown",
     "send_digest_to_telegram",
+    "CalendarService",
+    "CalendarAuthError",
 ]
