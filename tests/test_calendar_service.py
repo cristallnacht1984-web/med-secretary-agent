@@ -5,9 +5,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from google.auth.exceptions import RefreshError
+from googleapiclient.errors import HttpError
 
 from app.config import get_settings
-from app.services.calendar_service import CalendarAuthError, CalendarService
+from app.services.calendar_service import CalendarAPIError, CalendarAuthError, CalendarService
 
 
 @pytest.fixture(autouse=True)
@@ -525,3 +526,605 @@ class TestLoggingAndRequestID:
                     await service.authenticate()
 
                     mock_req.assert_called_once()
+
+
+# =============================================================================
+# Task 7b: CRUD Operations Tests (20+ new tests)
+# =============================================================================
+
+
+class TestCreateEvent:
+    """Test create_event method."""
+
+    @pytest.mark.asyncio
+    async def test_create_event_success(self, mock_settings):
+        """Test successful event creation returns event_id."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        mock_event_id = "test_event_123"
+        mock_result = {"id": mock_event_id}
+
+        mock_events = MagicMock()
+        mock_insert = MagicMock()
+        mock_insert.execute.return_value = mock_result
+        mock_events.insert.return_value = mock_insert
+        service._service.events.return_value = mock_events
+
+        start = datetime(2025, 1, 15, 10, 0, tzinfo=timezone.utc)
+        end = datetime(2025, 1, 15, 11, 0, tzinfo=timezone.utc)
+
+        event_id = await service.create_event(
+            summary="Test Meeting",
+            start_time=start,
+            end_time=end,
+        )
+
+        assert event_id == mock_event_id
+        service._service.events.assert_called_once()
+        mock_events.insert.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_event_with_description_and_location(self, mock_settings):
+        """Test event creation with description and location."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        mock_result = {"id": "event_456"}
+
+        mock_events = MagicMock()
+        mock_insert = MagicMock()
+        mock_insert.execute.return_value = mock_result
+        mock_events.insert.return_value = mock_insert
+        service._service.events.return_value = mock_events
+
+        start = datetime(2025, 1, 15, 10, 0, tzinfo=timezone.utc)
+        end = datetime(2025, 1, 15, 11, 0, tzinfo=timezone.utc)
+
+        await service.create_event(
+            summary="Team Standup",
+            start_time=start,
+            end_time=end,
+            description="Daily sync meeting",
+            location="Conference Room A",
+        )
+
+        call_args = mock_events.insert.call_args
+        body = call_args[1]["body"]
+        assert body["description"] == "Daily sync meeting"
+        assert body["location"] == "Conference Room A"
+
+    @pytest.mark.asyncio
+    async def test_create_event_datetime_rfc3339_conversion(self, mock_settings):
+        """Test datetime is converted to RFC3339 format in API body."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        mock_result = {"id": "event_789"}
+
+        mock_events = MagicMock()
+        mock_insert = MagicMock()
+        mock_insert.execute.return_value = mock_result
+        mock_events.insert.return_value = mock_insert
+        service._service.events.return_value = mock_events
+
+        start = datetime(2025, 6, 15, 14, 30, tzinfo=timezone.utc)
+        end = datetime(2025, 6, 15, 15, 30, tzinfo=timezone.utc)
+
+        await service.create_event(
+            summary="RFC3339 Test",
+            start_time=start,
+            end_time=end,
+            timezone="America/New_York",
+        )
+
+        call_args = mock_events.insert.call_args
+        body = call_args[1]["body"]
+        assert body["start"]["dateTime"] == "2025-06-15T14:30:00+00:00"
+        assert body["end"]["dateTime"] == "2025-06-15T15:30:00+00:00"
+        assert body["start"]["timeZone"] == "America/New_York"
+        assert body["end"]["timeZone"] == "America/New_York"
+
+    @pytest.mark.asyncio
+    async def test_create_event_retry_on_5xx_success(self, mock_settings):
+        """Test retry on 5xx error succeeds on second attempt."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        mock_result = {"id": "retry_event"}
+        http_error = HttpError(resp=MagicMock(status=500), content=b"Internal Server Error", uri="http://test")
+
+        mock_events = MagicMock()
+        mock_insert = MagicMock()
+        mock_insert.execute.side_effect = [http_error, mock_result]
+        mock_events.insert.return_value = mock_insert
+        service._service.events.return_value = mock_events
+
+        start = datetime(2025, 1, 15, 10, 0, tzinfo=timezone.utc)
+        end = datetime(2025, 1, 15, 11, 0, tzinfo=timezone.utc)
+
+        with patch("asyncio.sleep", return_value=None):
+            event_id = await service.create_event(
+                summary="Retry Test",
+                start_time=start,
+                end_time=end,
+            )
+
+        assert event_id == "retry_event"
+        assert mock_insert.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_create_event_retry_on_timeout_success(self, mock_settings):
+        """Test retry on timeout error succeeds."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        mock_result = {"id": "timeout_retry_event"}
+
+        mock_events = MagicMock()
+        mock_insert = MagicMock()
+        mock_insert.execute.side_effect = [TimeoutError("Connection timeout"), mock_result]
+        mock_events.insert.return_value = mock_insert
+        service._service.events.return_value = mock_events
+
+        start = datetime(2025, 1, 15, 10, 0, tzinfo=timezone.utc)
+        end = datetime(2025, 1, 15, 11, 0, tzinfo=timezone.utc)
+
+        with patch("asyncio.sleep", return_value=None):
+            event_id = await service.create_event(
+                summary="Timeout Retry Test",
+                start_time=start,
+                end_time=end,
+            )
+
+        assert event_id == "timeout_retry_event"
+        assert mock_insert.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_create_event_all_retries_fail(self, mock_settings):
+        """Test CalendarAPIError raised when all retries fail."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        http_error = HttpError(resp=MagicMock(status=500), content=b"Server Error", uri="http://test")
+
+        mock_events = MagicMock()
+        mock_insert = MagicMock()
+        mock_insert.execute.side_effect = http_error
+        mock_events.insert.return_value = mock_insert
+        service._service.events.return_value = mock_events
+
+        start = datetime(2025, 1, 15, 10, 0, tzinfo=timezone.utc)
+        end = datetime(2025, 1, 15, 11, 0, tzinfo=timezone.utc)
+
+        with patch("asyncio.sleep", return_value=None):
+            with pytest.raises(CalendarAPIError):
+                await service.create_event(
+                    summary="Fail Test",
+                    start_time=start,
+                    end_time=end,
+                )
+
+        assert mock_insert.execute.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_create_event_4xx_no_retry(self, mock_settings):
+        """Test 4xx errors (non-429) do not retry, immediate CalendarAPIError."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        http_error = HttpError(resp=MagicMock(status=400), content=b"Bad Request", uri="http://test")
+
+        mock_events = MagicMock()
+        mock_insert = MagicMock()
+        mock_insert.execute.side_effect = http_error
+        mock_events.insert.return_value = mock_insert
+        service._service.events.return_value = mock_events
+
+        start = datetime(2025, 1, 15, 10, 0, tzinfo=timezone.utc)
+        end = datetime(2025, 1, 15, 11, 0, tzinfo=timezone.utc)
+
+        with patch("asyncio.sleep", return_value=None):
+            with pytest.raises(CalendarAPIError):
+                await service.create_event(
+                    summary="Bad Request Test",
+                    start_time=start,
+                    end_time=end,
+                )
+
+        assert mock_insert.execute.call_count == 1
+
+
+class TestGetEvent:
+    """Test get_event method."""
+
+    @pytest.mark.asyncio
+    async def test_get_event_success(self, mock_settings):
+        """Test successful event retrieval returns dict with fields."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        mock_api_response = {
+            "id": "event_abc",
+            "summary": "Board Meeting",
+            "start": {"dateTime": "2025-01-20T09:00:00Z"},
+            "end": {"dateTime": "2025-01-20T10:00:00Z"},
+            "description": "Quarterly review",
+            "location": "Room 101",
+        }
+
+        mock_events = MagicMock()
+        mock_get = MagicMock()
+        mock_get.execute.return_value = mock_api_response
+        mock_events.get.return_value = mock_get
+        service._service.events.return_value = mock_events
+
+        result = await service.get_event("event_abc")
+
+        assert result["id"] == "event_abc"
+        assert result["summary"] == "Board Meeting"
+        assert result["start"] == "2025-01-20T09:00:00Z"
+        assert result["end"] == "2025-01-20T10:00:00Z"
+        assert result["description"] == "Quarterly review"
+        assert result["location"] == "Room 101"
+
+    @pytest.mark.asyncio
+    async def test_get_event_404_raises_calendar_api_error(self, mock_settings):
+        """Test 404 raises CalendarAPIError with 'Event not found' message."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        http_error = HttpError(resp=MagicMock(status=404), content=b"Not Found", uri="http://test")
+
+        mock_events = MagicMock()
+        mock_get = MagicMock()
+        mock_get.execute.side_effect = http_error
+        mock_events.get.return_value = mock_get
+        service._service.events.return_value = mock_events
+
+        with pytest.raises(CalendarAPIError) as exc_info:
+            await service.get_event("nonexistent_event")
+
+        assert "Event not found" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_get_event_retry_on_5xx(self, mock_settings):
+        """Test retry on 5xx for get_event."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        mock_api_response = {"id": "retry_get_event", "summary": "Retrieved"}
+        http_error = HttpError(resp=MagicMock(status=503), content=b"Service Unavailable", uri="http://test")
+
+        mock_events = MagicMock()
+        mock_get = MagicMock()
+        mock_get.execute.side_effect = [http_error, mock_api_response]
+        mock_events.get.return_value = mock_get
+        service._service.events.return_value = mock_events
+
+        with patch("asyncio.sleep", return_value=None):
+            result = await service.get_event("retry_get_event")
+
+        assert result["id"] == "retry_get_event"
+        assert mock_get.execute.call_count == 2
+
+
+class TestUpdateEvent:
+    """Test update_event method."""
+
+    @pytest.mark.asyncio
+    async def test_update_event_patch_only_summary(self, mock_settings):
+        """Test PATCH updates only summary field when only summary provided."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        mock_result = {"id": "updated_event"}
+
+        mock_events = MagicMock()
+        mock_patch = MagicMock()
+        mock_patch.execute.return_value = mock_result
+        mock_events.patch.return_value = mock_patch
+        service._service.events.return_value = mock_events
+
+        await service.update_event(
+            event_id="event_xyz",
+            summary="Updated Title",
+        )
+
+        call_args = mock_events.patch.call_args
+        body = call_args[1]["body"]
+        assert "summary" in body
+        assert body["summary"] == "Updated Title"
+        assert "start" not in body
+        assert "end" not in body
+        assert "description" not in body
+        assert "location" not in body
+
+    @pytest.mark.asyncio
+    async def test_update_event_patch_with_datetime(self, mock_settings):
+        """Test PATCH with datetime fields."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        mock_result = {"id": "datetime_updated_event"}
+
+        mock_events = MagicMock()
+        mock_patch = MagicMock()
+        mock_patch.execute.return_value = mock_result
+        mock_events.patch.return_value = mock_patch
+        service._service.events.return_value = mock_events
+
+        new_start = datetime(2025, 2, 1, 15, 0, tzinfo=timezone.utc)
+        new_end = datetime(2025, 2, 1, 16, 0, tzinfo=timezone.utc)
+
+        await service.update_event(
+            event_id="event_xyz",
+            start_time=new_start,
+            end_time=new_end,
+        )
+
+        call_args = mock_events.patch.call_args
+        body = call_args[1]["body"]
+        assert "start" in body
+        assert "end" in body
+        assert body["start"]["dateTime"] == "2025-02-01T15:00:00+00:00"
+        assert body["end"]["dateTime"] == "2025-02-01T16:00:00+00:00"
+
+    @pytest.mark.asyncio
+    async def test_update_event_retry_on_5xx(self, mock_settings):
+        """Test retry on 5xx for update_event."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        mock_result = {"id": "retry_update_event"}
+        http_error = HttpError(resp=MagicMock(status=502), content=b"Bad Gateway", uri="http://test")
+
+        mock_events = MagicMock()
+        mock_patch = MagicMock()
+        mock_patch.execute.side_effect = [http_error, mock_result]
+        mock_events.patch.return_value = mock_patch
+        service._service.events.return_value = mock_events
+
+        with patch("asyncio.sleep", return_value=None):
+            event_id = await service.update_event(
+                event_id="event_xyz",
+                summary="Retry Update",
+            )
+
+        assert event_id == "retry_update_event"
+        assert mock_patch.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_update_event_404_raises_calendar_api_error(self, mock_settings):
+        """Test 404 raises CalendarAPIError for update_event."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        http_error = HttpError(resp=MagicMock(status=404), content=b"Not Found", uri="http://test")
+
+        mock_events = MagicMock()
+        mock_patch = MagicMock()
+        mock_patch.execute.side_effect = http_error
+        mock_events.patch.return_value = mock_patch
+        service._service.events.return_value = mock_events
+
+        with pytest.raises(CalendarAPIError) as exc_info:
+            await service.update_event(
+                event_id="nonexistent_event",
+                summary="Update Nonexistent",
+            )
+
+        assert "Event not found" in str(exc_info.value)
+
+
+class TestDeleteEvent:
+    """Test delete_event method."""
+
+    @pytest.mark.asyncio
+    async def test_delete_event_success(self, mock_settings):
+        """Test successful event deletion."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        mock_events = MagicMock()
+        mock_delete = MagicMock()
+        mock_delete.execute.return_value = None
+        mock_events.delete.return_value = mock_delete
+        service._service.events.return_value = mock_events
+
+        await service.delete_event("event_to_delete")
+
+        mock_events.delete.assert_called_once()
+        mock_delete.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_event_404_raises_calendar_api_error(self, mock_settings):
+        """Test 404 raises CalendarAPIError for delete_event."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        http_error = HttpError(resp=MagicMock(status=404), content=b"Not Found", uri="http://test")
+
+        mock_events = MagicMock()
+        mock_delete = MagicMock()
+        mock_delete.execute.side_effect = http_error
+        mock_events.delete.return_value = mock_delete
+        service._service.events.return_value = mock_events
+
+        with pytest.raises(CalendarAPIError) as exc_info:
+            await service.delete_event("nonexistent_event")
+
+        assert "Event not found" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_delete_event_retry_on_5xx(self, mock_settings):
+        """Test retry on 5xx for delete_event."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        http_error = HttpError(resp=MagicMock(status=500), content=b"Internal Error", uri="http://test")
+
+        mock_events = MagicMock()
+        mock_delete = MagicMock()
+        mock_delete.execute.side_effect = [http_error, None]
+        mock_events.delete.return_value = mock_delete
+        service._service.events.return_value = mock_events
+
+        with patch("asyncio.sleep", return_value=None):
+            await service.delete_event("event_retry_delete")
+
+        assert mock_delete.execute.call_count == 2
+
+
+class TestRetryWithBackoff:
+    """Test _retry_with_backoff method."""
+
+    @pytest.mark.asyncio
+    async def test_retry_exponential_delays(self, mock_settings):
+        """Test exponential backoff delays: 1s, 2s, 4s."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        http_error = HttpError(resp=MagicMock(status=500), content=b"Error", uri="http://test")
+
+        mock_func = MagicMock()
+        mock_func.side_effect = [http_error, http_error, http_error]
+
+        sleep_calls = []
+
+        async def mock_sleep(delay):
+            sleep_calls.append(delay)
+            return None
+
+        with patch("asyncio.sleep", side_effect=mock_sleep):
+            with pytest.raises(CalendarAPIError):
+                await service._retry_with_backoff(mock_func)
+
+        # Delays should be 1.0, 2.0 (base_delay * 2**attempt for attempt 0, 1)
+        assert len(sleep_calls) == 2
+        assert sleep_calls[0] == 1.0
+        assert sleep_calls[1] == 2.0
+
+    @pytest.mark.asyncio
+    async def test_retry_on_429_rate_limit(self, mock_settings):
+        """Test 429 rate limit triggers retry."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        mock_result = {"id": "rate_limited_event"}
+        http_error = HttpError(resp=MagicMock(status=429), content=b"Rate Limit Exceeded", uri="http://test")
+
+        mock_events = MagicMock()
+        mock_insert = MagicMock()
+        mock_insert.execute.side_effect = [http_error, mock_result]
+        mock_events.insert.return_value = mock_insert
+        service._service.events.return_value = mock_events
+
+        with patch("asyncio.sleep", return_value=None):
+            event_id = await service.create_event(
+                summary="Rate Limit Test",
+                start_time=datetime(2025, 1, 15, 10, 0, tzinfo=timezone.utc),
+                end_time=datetime(2025, 1, 15, 11, 0, tzinfo=timezone.utc),
+            )
+
+        assert event_id == "rate_limited_event"
+        assert mock_insert.execute.call_count >= 2
+
+
+class TestIntegrationCRUD:
+    """Integration test: create → get → update → delete flow."""
+
+    @pytest.mark.asyncio
+    async def test_full_crud_flow(self, mock_settings):
+        """Test complete CRUD lifecycle with mock service."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        created_event_id = "crud_test_event"
+        mock_events = MagicMock()
+
+        # Setup mocks for all operations
+        mock_insert = MagicMock()
+        mock_insert.execute.return_value = {"id": created_event_id}
+
+        mock_get = MagicMock()
+        mock_get.execute.return_value = {
+            "id": created_event_id,
+            "summary": "Original Title",
+            "start": {"dateTime": "2025-01-15T10:00:00Z"},
+            "end": {"dateTime": "2025-01-15T11:00:00Z"},
+            "description": "Original description",
+            "location": "Original location",
+        }
+
+        mock_patch = MagicMock()
+        mock_patch.execute.return_value = {"id": created_event_id}
+
+        mock_delete = MagicMock()
+        mock_delete.execute.return_value = None
+
+        def events_side_effect(method_name=None, **kwargs):
+            if method_name == "insert":
+                return mock_insert
+            elif method_name == "get":
+                return mock_get
+            elif method_name == "patch":
+                return mock_patch
+            elif method_name == "delete":
+                return mock_delete
+            return mock_events
+
+        service._service.events = MagicMock(side_effect=lambda **kw: MagicMock(
+            insert=lambda **kwargs: mock_insert,
+            get=lambda **kwargs: mock_get,
+            patch=lambda **kwargs: mock_patch,
+            delete=lambda **kwargs: mock_delete,
+        ))
+
+        start = datetime(2025, 1, 15, 10, 0, tzinfo=timezone.utc)
+        end = datetime(2025, 1, 15, 11, 0, tzinfo=timezone.utc)
+
+        # CREATE
+        event_id = await service.create_event(
+            summary="Original Title",
+            start_time=start,
+            end_time=end,
+            description="Original description",
+            location="Original location",
+        )
+        assert event_id == created_event_id
+
+        # GET
+        event_data = await service.get_event(created_event_id)
+        assert event_data["id"] == created_event_id
+        assert event_data["summary"] == "Original Title"
+
+        # UPDATE
+        updated_id = await service.update_event(
+            event_id=created_event_id,
+            summary="Updated Title",
+        )
+        assert updated_id == created_event_id
+
+        # DELETE
+        await service.delete_event(created_event_id)

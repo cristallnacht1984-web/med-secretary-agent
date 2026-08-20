@@ -1,11 +1,14 @@
 """Calendar Service with OAuth2 authentication for Google Calendar API."""
 import asyncio
 import json
+from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from app.config import Settings, get_settings
 from app.logging_setup import get_logger, new_request_id
@@ -15,6 +18,12 @@ SCOPES = ["https://www.googleapis.com/auth/calendar.events.readwrite"]
 
 class CalendarAuthError(RuntimeError):
     """Ошибка аутентификации Google Calendar."""
+
+    pass
+
+
+class CalendarAPIError(RuntimeError):
+    """Ошибка вызова Google Calendar API."""
 
     pass
 
@@ -176,3 +185,342 @@ class CalendarService:
             self._logger.info("Calendar service initialized")
 
         return self._service
+
+    async def _retry_with_backoff(
+        self,
+        func: Callable,
+        max_retries: int = 3,
+        base_delay: float = 1.0,
+    ) -> Any:
+        """Execute function with exponential backoff retry.
+
+        Args:
+            func: Sync function to execute (will be wrapped in asyncio.to_thread).
+            max_retries: Maximum number of retry attempts.
+            base_delay: Base delay in seconds (delay = base_delay * 2**attempt).
+
+        Returns:
+            Result of successful function call.
+
+        Raises:
+            CalendarAPIError: If all retries fail or non-retryable error occurs.
+        """
+        for attempt in range(max_retries):
+            try:
+                # Wrap sync function in asyncio.to_thread
+                return await asyncio.to_thread(func)
+            except HttpError as e:
+                status_code = e.status_code
+                # Retry on 5xx and 429, not on other 4xx
+                if status_code in (500, 502, 503, 504, 429):
+                    if attempt < max_retries - 1:
+                        delay = base_delay * (2 ** attempt)
+                        self._logger.warning(
+                            "HTTP %d error, retrying in %.1fs (attempt %d/%d)",
+                            status_code,
+                            delay,
+                            attempt + 1,
+                            max_retries,
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        self._logger.error(
+                            "HTTP %d error after %d attempts",
+                            status_code,
+                            max_retries,
+                        )
+                        raise CalendarAPIError(f"HTTP {status_code}: {e.reason}") from e
+                else:
+                    # Non-retryable 4xx error
+                    if status_code == 404:
+                        raise CalendarAPIError("Event not found") from e
+                    raise CalendarAPIError(f"HTTP {status_code}: {e.reason}") from e
+            except TimeoutError as e:
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    self._logger.warning(
+                        "Timeout error, retrying in %.1fs (attempt %d/%d)",
+                        delay,
+                        attempt + 1,
+                        max_retries,
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    self._logger.error("Timeout error after %d attempts", max_retries)
+                    raise CalendarAPIError("Request timeout") from e
+            except Exception as e:
+                # Connection errors and other exceptions - retry
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    self._logger.warning(
+                        "%s error, retrying in %.1fs (attempt %d/%d)",
+                        type(e).__name__,
+                        delay,
+                        attempt + 1,
+                        max_retries,
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    self._logger.error(
+                        "%s error after %d attempts",
+                        type(e).__name__,
+                        max_retries,
+                    )
+                    raise CalendarAPIError(f"Request failed: {e}") from e
+
+        # Should not reach here, but just in case
+        raise CalendarAPIError(f"Request failed after {max_retries} attempts")
+
+    async def create_event(
+        self,
+        summary: str,
+        start_time: datetime,
+        end_time: datetime,
+        description: str | None = None,
+        location: str | None = None,
+        timezone: str | None = None,
+    ) -> str:
+        """Create a new event in Google Calendar.
+
+        Args:
+            summary: Event title/summary.
+            start_time: Event start time (UTC datetime).
+            end_time: Event end time (UTC datetime).
+            description: Optional event description.
+            location: Optional event location.
+            timezone: Optional timezone for display (defaults to settings.TIMEZONE).
+
+        Returns:
+            Event ID string.
+
+        Raises:
+            CalendarAPIError: If API call fails.
+            CalendarAuthError: If not authenticated.
+        """
+        service = await self._get_service()
+        tz = timezone if timezone is not None else str(self._settings.TIMEZONE)
+
+        # Convert datetime to RFC3339 format (ISO 8601 with timezone)
+        # Ensure datetimes are UTC and aware
+        if start_time.tzinfo is None:
+            start_time = start_time.replace(tzinfo=timezone.utc)
+        if end_time.tzinfo is None:
+            end_time = end_time.replace(tzinfo=timezone.utc)
+
+        event_body = {
+            "summary": summary,
+            "start": {
+                "dateTime": start_time.isoformat(),
+                "timeZone": tz,
+            },
+            "end": {
+                "dateTime": end_time.isoformat(),
+                "timeZone": tz,
+            },
+        }
+
+        if description is not None:
+            event_body["description"] = description
+        if location is not None:
+            event_body["location"] = location
+
+        request_id = new_request_id()
+        self._logger.info(f"Creating event: {summary}", extra={"request_id": request_id})
+
+        def _insert():
+            return service.events().insert(
+                calendarId=self._settings.GOOGLE_CALENDAR_ID,
+                body=event_body,
+            ).execute()
+
+        try:
+            result = await self._retry_with_backoff(_insert)
+            event_id = result.get("id")
+            self._logger.info(
+                f"Event created successfully: {event_id}",
+                extra={"request_id": request_id},
+            )
+            return event_id
+        except CalendarAPIError as e:
+            self._logger.error(
+                f"Failed to create event: {e}",
+                extra={"request_id": request_id},
+            )
+            raise
+
+    async def get_event(self, event_id: str) -> dict:
+        """Get an event by ID from Google Calendar.
+
+        Args:
+            event_id: The event ID to retrieve.
+
+        Returns:
+            Dict with keys: id, summary, start, end, description, location.
+
+        Raises:
+            CalendarAPIError: If event not found (404) or API call fails.
+            CalendarAuthError: If not authenticated.
+        """
+        service = await self._get_service()
+        request_id = new_request_id()
+        self._logger.info(f"Getting event: {event_id}", extra={"request_id": request_id})
+
+        def _get():
+            return service.events().get(
+                calendarId=self._settings.GOOGLE_CALENDAR_ID,
+                eventId=event_id,
+            ).execute()
+
+        try:
+            result = await self._retry_with_backoff(_get)
+            event_data = {
+                "id": result.get("id"),
+                "summary": result.get("summary"),
+                "start": result.get("start", {}).get("dateTime"),
+                "end": result.get("end", {}).get("dateTime"),
+                "description": result.get("description"),
+                "location": result.get("location"),
+            }
+            self._logger.info(
+                f"Event retrieved successfully: {event_id}",
+                extra={"request_id": request_id},
+            )
+            return event_data
+        except CalendarAPIError as e:
+            if "Event not found" in str(e):
+                self._logger.error(
+                    f"Event not found: {event_id}",
+                    extra={"request_id": request_id},
+                )
+            else:
+                self._logger.error(
+                    f"Failed to get event {event_id}: {e}",
+                    extra={"request_id": request_id},
+                )
+            raise
+
+    async def update_event(
+        self,
+        event_id: str,
+        summary: str | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        description: str | None = None,
+        location: str | None = None,
+    ) -> str:
+        """Update an existing event in Google Calendar (PATCH/partial update).
+
+        Args:
+            event_id: The event ID to update.
+            summary: New event title (optional).
+            start_time: New start time (optional, UTC datetime).
+            end_time: New end time (optional, UTC datetime).
+            description: New description (optional).
+            location: New location (optional).
+
+        Returns:
+            Event ID string.
+
+        Raises:
+            CalendarAPIError: If event not found (404) or API call fails.
+            CalendarAuthError: If not authenticated.
+        """
+        service = await self._get_service()
+        request_id = new_request_id()
+        self._logger.info(f"Updating event: {event_id}", extra={"request_id": request_id})
+
+        # Build patch body with only provided fields
+        patch_body = {}
+
+        if summary is not None:
+            patch_body["summary"] = summary
+
+        if start_time is not None or end_time is not None:
+            tz = str(self._settings.TIMEZONE)
+            if start_time is not None:
+                if start_time.tzinfo is None:
+                    start_time = start_time.replace(tzinfo=UTC)
+                patch_body["start"] = {
+                    "dateTime": start_time.isoformat(),
+                    "timeZone": tz,
+                }
+            if end_time is not None:
+                if end_time.tzinfo is None:
+                    end_time = end_time.replace(tzinfo=UTC)
+                patch_body["end"] = {
+                    "dateTime": end_time.isoformat(),
+                    "timeZone": tz,
+                }
+
+        if description is not None:
+            patch_body["description"] = description
+
+        if location is not None:
+            patch_body["location"] = location
+
+        def _patch():
+            return service.events().patch(
+                calendarId=self._settings.GOOGLE_CALENDAR_ID,
+                eventId=event_id,
+                body=patch_body,
+            ).execute()
+
+        try:
+            result = await self._retry_with_backoff(_patch)
+            updated_id = result.get("id")
+            self._logger.info(
+                f"Event updated successfully: {updated_id}",
+                extra={"request_id": request_id},
+            )
+            return updated_id
+        except CalendarAPIError as e:
+            if "Event not found" in str(e):
+                self._logger.error(
+                    f"Event not found: {event_id}",
+                    extra={"request_id": request_id},
+                )
+            else:
+                self._logger.error(
+                    f"Failed to update event {event_id}: {e}",
+                    extra={"request_id": request_id},
+                )
+            raise
+
+    async def delete_event(self, event_id: str) -> None:
+        """Delete an event from Google Calendar.
+
+        Args:
+            event_id: The event ID to delete.
+
+        Raises:
+            CalendarAPIError: If event not found (404) or API call fails.
+            CalendarAuthError: If not authenticated.
+        """
+        service = await self._get_service()
+        request_id = new_request_id()
+        self._logger.info(f"Deleting event: {event_id}", extra={"request_id": request_id})
+
+        def _delete():
+            return service.events().delete(
+                calendarId=self._settings.GOOGLE_CALENDAR_ID,
+                eventId=event_id,
+            ).execute()
+
+        try:
+            await self._retry_with_backoff(_delete)
+            self._logger.info(
+                f"Event deleted successfully: {event_id}",
+                extra={"request_id": request_id},
+            )
+        except CalendarAPIError as e:
+            if "Event not found" in str(e):
+                self._logger.error(
+                    f"Event not found: {event_id}",
+                    extra={"request_id": request_id},
+                )
+            else:
+                self._logger.error(
+                    f"Failed to delete event {event_id}: {e}",
+                    extra={"request_id": request_id},
+                )
+            raise
