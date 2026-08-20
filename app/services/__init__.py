@@ -1,4 +1,12 @@
 """Services package for MedNews Secretary Agent."""
+from app.services.digest_builder import (
+    REGION_EMOJI,
+    DigestDeliveryError,
+    build_digest_message,
+    escape_markdown_v2,
+    format_digest_markdown,
+    send_digest_to_telegram,
+)
 from app.services.news_pipeline import (
     build_batches,
     deduplicate_articles,
@@ -21,4 +29,10 @@ __all__ = [
     "deduplicate_articles",
     "build_batches",
     "prepare_batches_for_analysis",
+    "DigestDeliveryError",
+    "REGION_EMOJI",
+    "build_digest_message",
+    "escape_markdown_v2",
+    "format_digest_markdown",
+    "send_digest_to_telegram",
 ]

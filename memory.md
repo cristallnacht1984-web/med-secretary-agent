@@ -26,6 +26,7 @@
 | `app/llm/client.py` | ✅ DONE | Async-клиент Qwen 3.6 через OpenAI-compatible API: `LLMClient`, `analyze_news_batch`, `classify_intent`, `summarize_reminder`, `aclose`. Использует `openai.AsyncOpenAI`, retry с exponential backoff, rate-limit (RPM/TPM), Pydantic-валидация ответов. |
 | `app/services/rss_fetcher.py` | ✅ DONE | Async RSS fetch 10 feeds (TZ App А), aiohttp+feedparser, retry/backoff (3 attempts, 1s base), graceful failure (source failure ≠ digest abort), RawArticle dataclass, UTC filtering. API: `fetch_all_feeds(lookback_hours=24)`, `fetch_single_feed(url, source, region)`, `RawArticle`, `FeedFetchError`, `RSS_FEEDS` |
 | `app/services/news_pipeline.py` | ✅ DONE | News Pipeline: дедупликация по URL+title_hash (MD5), окно 7 дней, батчи NEWS_BATCH_MIN/MAX (3–5). API: `deduplicate_articles(articles) -> list[RawArticle]`, `build_batches(articles) -> list[list[RawArticle]]`, `prepare_batches_for_analysis(lookback_hours=24) -> list[list[dict]]`. Graceful degradation при ошибке БД → return [] + log error. |
+| `app/services/digest_builder.py` | ✅ DONE | Digest Builder: финальный модуль News Pipeline. API: `build_digest_message(lookback_hours=24, client: LLMClient | None = None) -> str`, `format_digest_markdown(analyses: list[NewsAnalysisBatch], date: datetime) -> str`, `escape_markdown_v2(text: str) -> str`, `send_digest_to_telegram(chat_id: int, message: str, bot: Bot | None = None) -> int`. MarkdownV2-форматирование, retry-логика доставки, graceful failure на LLM-ошибках, DB-логирование. |
 
 ### В работе (декомпозировано):
 | Модуль | Статус |
@@ -283,6 +284,8 @@ Legacy-поля (DIGEST_TIME_HOUR, USER_TIMEZONE, GOOGLE_CREDENTIALS_JSON, REMIN
 | 5c | `app/llm/client.py` + тесты | ✅ DONE | 86316d41d83612016e628815cae0861cfb606d98 |
 | 6a | `app/services/rss_fetcher.py` | ✅ DONE | 029a8a75f7bc6e9e1bb810d0c0e958d96b6767ad |
 | 6b | `app/services/news_pipeline.py` + тесты | ✅ DONE | d933486 |
+| 6c | Digest Builder + TG-доставка | ✅ DONE | 3d3945038020659a22cd2622f4ca27a42aa636ea |
+| 6 | News Pipeline (полный) | ✅ DONE | — |
 | 7 | Calendar Service (Google Calendar OAuth2) | ⬜ | — |
 | 8 | Bot Handlers (aiogram routers, whitelist) | ⬜ | — |
 | 9 | Reminder Engine | ⬜ | — |
