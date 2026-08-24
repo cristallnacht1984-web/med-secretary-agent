@@ -39,6 +39,7 @@
 | `app/llm/schemas.py` (Задача 5b) | ✅ DONE |
 | `app/llm/client.py` + `tests/test_llm.py` (Задача 5c) | ✅ DONE |
 | `app/services/calendar_service.py` + `tests/test_calendar_service.py` (Задача 7a) | ✅ DONE |
+| `app/bot/handlers.py` + `tests/test_bot_slots.py` (Задача 8b) | ✅ DONE |
 
 ---
 
@@ -251,6 +252,10 @@ Legacy-поля (DIGEST_TIME_HOUR, USER_TIMEZONE, GOOGLE_CREDENTIALS_JSON, REMIN
 **Проблема:** файлы `app/config.py`, `app/logging_setup.py`, `app/health.py`, `app/db/`, а также тесты `tests/test_config.py`, `tests/test_logging.py`, `tests/test_health.py`, `tests/test_db.py` не синхронизированы в workspace техлида. Регрессионное тестирование `pytest tests/test_config.py tests/test_logging.py tests/test_health.py tests/test_db.py` невозможно.
 **Решение:** оркестратор должен обеспечить наличие protected files в workspace перед задачей 5c (где потребуется интеграция с Settings). Для задачи 5a это не блокирующая проблема, т.к. `app/llm/prompts.py` автономен.
 
+### 4.13 Урок 8a-clean: грязный git tree перед стартом задачи
+**Проблема:** перед стартом задачи в дереве оставались незакоммиченные артефакты (в т.ч. случайно установленный libtmux, .gitignore был модифицирован), что создавало риск загрязнения коммита и ложных срабатываний проверок protected-файлов.
+**Решение:** обязательная ФАЗА 0 для каждой задачи: (1) `pip uninstall -y libtmux`; (2) `git status --porcelain` — НЕЧИСТОЕ дерево по защищённым файлам → СТОП и доклад оркестратору; (3) `pytest -v` — фиксация baseline. .gitignore и protected-файлы восстанавливаются через `git checkout HEAD -- <file>` ДО старта.
+
 ---
 
 ## 5. ЧЕК-ЛИСТ ПРИЁМКИ ЗАДАЧИ (template отчёта техлида)
@@ -297,6 +302,8 @@ Legacy-поля (DIGEST_TIME_HOUR, USER_TIMEZONE, GOOGLE_CREDENTIALS_JSON, REMIN
 | 7c | find_available_slots + TZ conversion | ✅ DONE | 750ed11b2bbb03d5f41923086cfb430194cb2dfd |
 | 7 | Calendar Service (Google Calendar OAuth2) | ✅ DONE | — |
 | 8a | Bot foundation (whitelist filter, keyboards, router) | ✅ DONE | d4892214b18bfa6695fe7b8d38938b52e7bdd751 |
+| 8a-clean | Очистка артефактов перед стартом 8b | ✅ DONE | 9ae74d6 |
+| 8b | /slots command + slot selection flow | ✅ DONE | 9ae74d6 |
 | 8 | Bot Handlers (aiogram routers, whitelist) | ⬜ IN_PROGRESS | — |
 | 9 | Reminder Engine | ⬜ | — |
 | 10 | Scheduler (APScheduler) | ⬜ | — |
