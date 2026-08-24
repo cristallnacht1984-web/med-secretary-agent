@@ -8,7 +8,13 @@ from aiogram import F, Router
 from aiogram.filters import Command
 
 from app.bot.filters import WhitelistFilter
-from app.bot.handlers import cb_slot, cmd_slots
+from app.bot.handlers import (
+    SecretaryStates,
+    cb_confirm_create,
+    cb_slot,
+    cmd_slots,
+    msg_waiting_title,
+)
 
 
 def build_router() -> Router:
@@ -30,5 +36,10 @@ def build_router() -> Router:
     # Register 8b handlers
     router.message.register(cmd_slots, Command("slots"))
     router.callback_query.register(cb_slot, F.data.startswith("slot:"))
+
+    # Register 8c handlers
+    from aiogram.filters import StateFilter
+    router.message.register(msg_waiting_title, StateFilter(SecretaryStates.waiting_title))
+    router.callback_query.register(cb_confirm_create, F.data.startswith("cf:create:"))
 
     return router
