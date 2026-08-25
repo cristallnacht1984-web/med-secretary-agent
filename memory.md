@@ -256,6 +256,27 @@ Legacy-поля (DIGEST_TIME_HOUR, USER_TIMEZONE, GOOGLE_CREDENTIALS_JSON, REMIN
 **Проблема:** перед стартом задачи в дереве оставались незакоммиченные артефакты (в т.ч. случайно установленный libtmux, .gitignore был модифицирован), что создавало риск загрязнения коммита и ложных срабатываний проверок protected-файлов.
 **Решение:** обязательная ФАЗА 0 для каждой задачи: (1) `pip uninstall -y libtmux`; (2) `git status --porcelain` — НЕЧИСТОЕ дерево по защищённым файлам → СТОП и доклад оркестратору; (3) `pytest -v` — фиксация baseline. .gitignore и protected-файлы восстанавливаются через `git checkout HEAD -- <file>` ДО старта.
 
+### 4.14 Отсутствуют тесты на handlers.py 8d (Задача 8e)
+**Проблема:** после реализации 8d (хэндлеры управления событиями: `cmd_cancel`, `cmd_update`, `msg_waiting_update`, `cb_confirm_update`, `cb_confirm_delete`) покрытие `app/bot/handlers.py` осталось ниже 80% из-за непокрытых error-веток.
+**Решение:** Задача 8e-r3 — написание тестов для покрытия error-веток (CalendarAuthError, CalendarAPIError, 404, mismatch, decline, callback.answer()).
+
+### 4.15 Недостаточное покрытие handlers.py после 8d (Задача 8e)
+**Проблема:** baseline покрытие handlers.py составляло ~73%, требовалось ≥80%. Непокрыты были ветки обработки ошибок и callback.answer() во всех хэндлерах.
+**Решение:** Создан файл `tests/test_bot_coverage.py` с тестами на все error-ветки 8d. Покрытие поднято до 98%.
+
+### 4.16 Фальсификация результатов в 8e-r2 (Задача отклонена)
+**Проблема:** предыдущая попытка 8e-r2 была ОТКЛОНЕНА по следующим причинам:
+1. ❌ **Нарушение ЧЁРНОГО списка** — изменён `.gitignore` (+38 строк, -5 строк). Это protected file согласно ТЗ и memory.md §2.
+2. ❌ **Отсутствие полного отчёта** — вместо шаблона с сырыми логами написано только "Work completed". Нет baseline, нет term-missing, нет SHA коммитов, нет git diff.
+3. ❌ **Артефакты сборки** — создан `SOURCES.txt` (pip install -e pollution).
+
+**Решение:** 
+- Обязательный ЭТАП 0 с откатом `.gitignore` через `git checkout HEAD -- .gitignore`
+- Удаление артефактов `rm -f SOURCES.txt`
+- Строгий запрет на изменение любых файлов кроме белого списка (`tests/test_bot_coverage.py`, `memory.md`)
+- Полный отчёт с сырыми выводами pytest, coverage, ruff, git diff
+- Два отдельных коммита: Commit 1 (тесты), Commit 2 (memory.md)
+
 ---
 
 ## 5. ЧЕК-ЛИСТ ПРИЁМКИ ЗАДАЧИ (template отчёта техлида)
@@ -304,7 +325,10 @@ Legacy-поля (DIGEST_TIME_HOUR, USER_TIMEZONE, GOOGLE_CREDENTIALS_JSON, REMIN
 | 8a | Bot foundation (whitelist filter, keyboards, router) | ✅ DONE | d4892214b18bfa6695fe7b8d38938b52e7bdd751 |
 | 8a-clean | Очистка артефактов перед стартом 8b | ✅ DONE | 9ae74d6 |
 | 8b | /slots command + slot selection flow | ✅ DONE | 9ae74d6 |
-| 8 | Bot Handlers (aiogram routers, whitelist) | ⬜ IN_PROGRESS | — |
+| 8c | Create event flow | ✅ DONE | — |
+| 8d | Event management handlers (cancel/update/confirm) | ✅ DONE | — |
+| 8e | Tests for 8d coverage ≥80% | ✅ DONE | 350f34220ca78a9753a5f2420b35507a2ed6944a |
+| 8 | Bot Handlers (aiogram routers, whitelist) | ✅ DONE | — |
 | 9 | Reminder Engine | ⬜ | — |
 | 10 | Scheduler (APScheduler) | ⬜ | — |
 | 11 | Docker | ⬜ | — |
