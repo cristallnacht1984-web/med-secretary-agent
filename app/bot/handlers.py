@@ -39,6 +39,7 @@ class SecretaryStates(StatesGroup):
     """FSM states for secretary flow."""
 
     waiting_title = State()
+    waiting_update = State()
 
 
 async def cmd_slots(message: Message, state: FSMContext) -> None:
@@ -465,6 +466,581 @@ async def cb_confirm_create(callback: CallbackQuery, state: FSMContext) -> None:
         await state.clear()
         logger.info(
             f"Event created: {event_id}, title={title}",
+            extra={"request_id": request_id},
+        )
+        return
+
+    # Unknown callback data format
+    logger.warning(
+        f"Unknown callback data format: {callback_data}",
+        extra={"request_id": request_id},
+    )
+
+
+async def cmd_cancel(message: Message, state: FSMContext) -> None:
+    """Handle /cancel command - cancel an event by ID.
+
+    Args:
+        message: Incoming message with /cancel <event_id>.
+        state: FSM context (not used here).
+    """
+    request_id = new_request_id()
+    logger = get_logger("bot")
+    logger.info("/cancel command received", extra={"request_id": request_id})
+
+    # Parse event_id from command text
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer(
+            "Использование: /cancel <event_id>\n"
+            "Пример: /cancel abc123xyz"
+        )
+        logger.warning(
+            "/cancel called without event_id",
+            extra={"request_id": request_id},
+        )
+        return
+
+    event_id = parts[1]
+
+    # Authenticate and get event
+    service = CalendarService()
+    try:
+        await service.authenticate()
+    except CalendarAuthError as e:
+        logger.error(
+            f"Calendar auth failed: {e}",
+            extra={"request_id": request_id},
+        )
+        await message.answer("Ошибка аутентификации календаря. Попробуйте позже.")
+        return
+    except CalendarAPIError as e:
+        logger.error(
+            f"Calendar API error during auth: {e}",
+            extra={"request_id": request_id},
+        )
+        await message.answer("Ошибка календаря. Попробуйте позже.")
+        return
+
+    try:
+        event = await service.get_event(event_id)
+    except CalendarAuthError as e:
+        logger.error(
+            f"Calendar auth failed in get_event: {e}",
+            extra={"request_id": request_id},
+        )
+        await message.answer("Ошибка аутентификации календаря. Попробуйте позже.")
+        return
+    except CalendarAPIError as e:
+        logger.error(
+            f"Event not found or API error: {e}",
+            extra={"request_id": request_id},
+        )
+        if "Event not found" in str(e):
+            await message.answer("Событие не найдено")
+        else:
+            # Notify admin for API errors
+            settings = get_settings()
+            if settings.TELEGRAM_ADMIN_ID:
+                try:
+                    from aiogram import Bot
+                    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+                    await bot.send_message(
+                        chat_id=settings.TELEGRAM_ADMIN_ID,
+                        text=f"Calendar API error in /cancel: {e}",
+                    )
+                    await bot.session.close()
+                except Exception:
+                    pass
+            await message.answer("Ошибка календаря. Попробуйте позже.")
+        return
+
+    # Event found - show summary and ask for confirmation
+    title = event.get("summary", "Без названия")
+    start_iso = event.get("start")
+    end_iso = event.get("end")
+
+    # Parse and format times in UTC
+    try:
+        start_dt = datetime.fromisoformat(start_iso) if start_iso else None
+        end_dt = datetime.fromisoformat(end_iso) if end_iso else None
+        if start_dt and start_dt.tzinfo is None:
+            start_dt = start_dt.replace(tzinfo=UTC)
+        if end_dt and end_dt.tzinfo is None:
+            end_dt = end_dt.replace(tzinfo=UTC)
+        start_display = start_dt.strftime("%Y-%m-%d %H:%M UTC") if start_dt else "?"
+        end_display = end_dt.strftime("%Y-%m-%d %H:%M UTC") if end_dt else "?"
+    except (ValueError, TypeError) as e:
+        logger.error(
+            f"Invalid date format in event: {e}",
+            extra={"request_id": request_id},
+        )
+        start_display = "?"
+        end_display = "?"
+
+    safe_title = _escape_markdown_v2(title)
+    safe_start = _escape_markdown_v2(start_display)
+    safe_end = _escape_markdown_v2(end_display)
+
+    summary_text = (
+        f"Событие: {safe_title}\\n"
+        f"Начало: {safe_start}\\n"
+        f"Конец: {safe_end}"
+    )
+
+    from app.bot.keyboards import confirm_keyboard
+    await message.answer(summary_text, reply_markup=confirm_keyboard("delete", event_id))
+    logger.info(
+        f"Showed delete confirmation for event {event_id}",
+        extra={"request_id": request_id},
+    )
+
+
+async def cmd_update(message: Message, state: FSMContext) -> None:
+    """Handle /update command - update an event by ID.
+
+    Args:
+        message: Incoming message with /update <event_id>.
+        state: FSM context for storing snapshot.
+    """
+    request_id = new_request_id()
+    logger = get_logger("bot")
+    logger.info("/update command received", extra={"request_id": request_id})
+
+    # Parse event_id from command text
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer(
+            "Использование: /update <event_id>\n"
+            "Пример: /update abc123xyz"
+        )
+        logger.warning(
+            "/update called without event_id",
+            extra={"request_id": request_id},
+        )
+        return
+
+    event_id = parts[1]
+
+    # Authenticate and get event
+    service = CalendarService()
+    try:
+        await service.authenticate()
+    except CalendarAuthError as e:
+        logger.error(
+            f"Calendar auth failed: {e}",
+            extra={"request_id": request_id},
+        )
+        await message.answer("Ошибка аутентификации календаря. Попробуйте позже.")
+        return
+    except CalendarAPIError as e:
+        logger.error(
+            f"Calendar API error during auth: {e}",
+            extra={"request_id": request_id},
+        )
+        await message.answer("Ошибка календаря. Попробуйте позже.")
+        return
+
+    try:
+        event = await service.get_event(event_id)
+    except CalendarAuthError as e:
+        logger.error(
+            f"Calendar auth failed in get_event: {e}",
+            extra={"request_id": request_id},
+        )
+        await message.answer("Ошибка аутентификации календаря. Попробуйте позже.")
+        return
+    except CalendarAPIError as e:
+        logger.error(
+            f"Event not found or API error: {e}",
+            extra={"request_id": request_id},
+        )
+        if "Event not found" in str(e):
+            await message.answer("Событие не найдено")
+        else:
+            settings = get_settings()
+            if settings.TELEGRAM_ADMIN_ID:
+                try:
+                    from aiogram import Bot
+                    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+                    await bot.send_message(
+                        chat_id=settings.TELEGRAM_ADMIN_ID,
+                        text=f"Calendar API error in /update: {e}",
+                    )
+                    await bot.session.close()
+                except Exception:
+                    pass
+            await message.answer("Ошибка календаря. Попробуйте позже.")
+        return
+
+    # Event found - save snapshot and set state
+    old_title = event.get("summary", "")
+    old_start_iso = event.get("start", "")
+    old_end_iso = event.get("end", "")
+
+    snapshot = {
+        "event_id": event_id,
+        "old_title": old_title,
+        "old_start_iso": old_start_iso,
+        "old_end_iso": old_end_iso,
+    }
+    await state.update_data(snapshot=snapshot)
+    await state.set_state(SecretaryStates.waiting_update)
+
+    instruction = (
+        "Пришли новые данные в формате:\n"
+        "заголовок | ГГГГ-ММ-ДД ЧЧ:ММ | ГГГГ-ММ-ДД ЧЧ:ММ\n"
+        "(пустые части сохраняют старые значения)"
+    )
+    await message.answer(instruction)
+    logger.info(
+        f"Set waiting_update state for event {event_id}",
+        extra={"request_id": request_id},
+    )
+
+
+async def msg_waiting_update(message: Message, state: FSMContext) -> None:
+    """Handle user input in waiting_update state.
+
+    Args:
+        message: Incoming message with update data.
+        state: FSM context containing snapshot.
+    """
+    request_id = new_request_id()
+    logger = get_logger("bot")
+    logger.info("Waiting for update input", extra={"request_id": request_id})
+
+    # Get snapshot from state
+    state_data = await state.get_data()
+    snapshot = state_data.get("snapshot")
+
+    if not snapshot:
+        await message.answer("Сессия истекла, вызовите /update заново")
+        logger.warning(
+            "No snapshot in state",
+            extra={"request_id": request_id},
+        )
+        await state.clear()
+        return
+
+    event_id = snapshot.get("event_id")
+    old_title = snapshot.get("old_title", "")
+    old_start_iso = snapshot.get("old_start_iso", "")
+    old_end_iso = snapshot.get("old_end_iso", "")
+
+    # Parse input: title | start | end
+    text = message.text.strip() if message.text else ""
+    parts = text.split("|", maxsplit=2)
+
+    if len(parts) > 3:
+        await message.answer(
+            "Неверный формат. Используйте:\n"
+            "заголовок | ГГГГ-ММ-ДД ЧЧ:ММ | ГГГГ-ММ-ДД ЧЧ:ММ\n"
+            "(пустые части сохраняют старые значения)"
+        )
+        logger.warning(
+            "Invalid format: more than 3 parts",
+            extra={"request_id": request_id},
+        )
+        return
+
+    # Pad parts to 3
+    while len(parts) < 3:
+        parts.append("")
+
+    new_title_raw = parts[0].strip() or None
+    new_start_raw = parts[1].strip() or None
+    new_end_raw = parts[2].strip() or None
+
+    # Merge with old values
+    title = new_title_raw if new_title_raw else old_title
+    start_raw = new_start_raw if new_start_raw else old_start_iso
+    end_raw = new_end_raw if new_end_raw else old_end_iso
+
+    # Parse dates in user timezone -> UTC
+    settings = get_settings()
+    user_tz = ZoneInfo(str(settings.TIMEZONE))
+
+    try:
+        if new_start_raw:
+            start_dt = datetime.strptime(start_raw, "%Y-%m-%d %H:%M")
+            start_dt = start_dt.replace(tzinfo=user_tz)
+            start_utc = start_dt.astimezone(UTC)
+        else:
+            start_dt = datetime.fromisoformat(old_start_iso) if old_start_iso else None
+            if start_dt and start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=UTC)
+            start_utc = start_dt
+
+        if new_end_raw:
+            end_dt = datetime.strptime(end_raw, "%Y-%m-%d %H:%M")
+            end_dt = end_dt.replace(tzinfo=user_tz)
+            end_utc = end_dt.astimezone(UTC)
+        else:
+            end_dt = datetime.fromisoformat(old_end_iso) if old_end_iso else None
+            if end_dt and end_dt.tzinfo is None:
+                end_dt = end_dt.replace(tzinfo=UTC)
+            end_utc = end_dt
+    except (ValueError, TypeError) as e:
+        logger.error(
+            f"Invalid date format: {e}",
+            extra={"request_id": request_id},
+        )
+        await message.answer(
+            "Неверный формат даты. Используйте ГГГГ-ММ-ДД ЧЧ:ММ\n"
+            "Повторите ввод в формате:\n"
+            "заголовок | ГГГГ-ММ-ДД ЧЧ:ММ | ГГГГ-ММ-ДД ЧЧ:ММ"
+        )
+        return
+
+    # Create draft
+    import uuid
+    draft = {
+        "event_id": event_id,
+        "title": title,
+        "start_iso": start_utc.isoformat() if start_utc else "",
+        "end_iso": end_utc.isoformat() if end_utc else "",
+    }
+    draft_id = uuid.uuid4().hex[:8]
+    await state.update_data(draft=draft, draft_id=draft_id)
+
+    # Format display times
+    start_display = start_utc.strftime("%Y-%m-%d %H:%M UTC") if start_utc else "?"
+    end_display = end_utc.strftime("%Y-%m-%d %H:%M UTC") if end_utc else "?"
+
+    safe_title = _escape_markdown_v2(title)
+    safe_start = _escape_markdown_v2(start_display)
+    safe_end = _escape_markdown_v2(end_display)
+
+    question = f'Изменить событие "{safe_title}" на {safe_start}–{safe_end}?'
+
+    from app.bot.keyboards import confirm_keyboard
+    await message.answer(question, reply_markup=confirm_keyboard("update", draft_id))
+    logger.info(
+        f"Created update draft {draft_id} for event {event_id}",
+        extra={"request_id": request_id},
+    )
+
+
+async def cb_confirm_update(callback: CallbackQuery, state: FSMContext) -> None:
+    """Handle update confirmation callback.
+
+    Args:
+        callback: Callback query from confirm button.
+        state: FSM context containing draft.
+    """
+    request_id = new_request_id()
+    logger = get_logger("bot")
+    logger.info(f"Update confirm callback: {callback.data}", extra={"request_id": request_id})
+
+    # Always answer callback
+    await callback.answer()
+
+    callback_data = callback.data
+
+    # Handle decline
+    if callback_data == "cf:update:decline":
+        await callback.message.answer("Отменено")
+        await state.clear()
+        logger.info("Update declined", extra={"request_id": request_id})
+        return
+
+    # Handle "Yes" - cf:update:<draft_id>
+    if callback_data.startswith("cf:update:"):
+        callback_draft_id = callback_data.replace("cf:update:", "")
+
+        # Retrieve draft from state
+        state_data = await state.get_data()
+        draft = state_data.get("draft")
+        stored_draft_id = state_data.get("draft_id")
+
+        # Validate draft exists and IDs match
+        if not draft or callback_draft_id != stored_draft_id:
+            await callback.message.answer("Подтверждение устарело, вызовите /update заново")
+            logger.warning(
+                f"Draft mismatch: callback={callback_draft_id}, stored={stored_draft_id}",
+                extra={"request_id": request_id},
+            )
+            await state.clear()
+            return
+
+        # Extract data from draft
+        event_id = draft.get("event_id")
+        title = draft.get("title", "")
+        start_iso = draft.get("start_iso", "")
+        end_iso = draft.get("end_iso", "")
+
+        # Parse datetimes
+        try:
+            start_dt = datetime.fromisoformat(start_iso) if start_iso else None
+            end_dt = datetime.fromisoformat(end_iso) if end_iso else None
+            if start_dt and start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=UTC)
+            if end_dt and end_dt.tzinfo is None:
+                end_dt = end_dt.replace(tzinfo=UTC)
+        except (ValueError, TypeError) as e:
+            logger.error(
+                f"Invalid ISO format in draft: {e}",
+                extra={"request_id": request_id},
+            )
+            await callback.message.answer("Ошибка данных. Вызовите /update заново.")
+            await state.clear()
+            return
+
+        # Authenticate and update event
+        service = CalendarService()
+        try:
+            await service.authenticate()
+        except CalendarAuthError as e:
+            logger.error(
+                f"Calendar auth failed: {e}",
+                extra={"request_id": request_id},
+            )
+            await callback.message.answer("Ошибка аутентификации календаря. Попробуйте позже.")
+            return
+        except CalendarAPIError as e:
+            logger.error(
+                f"Calendar API error during auth: {e}",
+                extra={"request_id": request_id},
+            )
+            await callback.message.answer("Ошибка календаря. Попробуйте позже.")
+            return
+
+        try:
+            await service.update_event(
+                event_id=event_id,
+                summary=title,
+                start_time=start_dt,
+                end_time=end_dt,
+            )
+        except CalendarAuthError as e:
+            logger.error(
+                f"Calendar auth failed in update_event: {e}",
+                extra={"request_id": request_id},
+            )
+            await callback.message.answer("Ошибка аутентификации календаря. Попробуйте позже.")
+            return
+        except CalendarAPIError as e:
+            logger.error(
+                f"Calendar API error in update_event: {e}",
+                extra={"request_id": request_id},
+            )
+            # Notify admin
+            settings = get_settings()
+            if settings.TELEGRAM_ADMIN_ID:
+                try:
+                    from aiogram import Bot
+                    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+                    await bot.send_message(
+                        chat_id=settings.TELEGRAM_ADMIN_ID,
+                        text=f"Calendar API error in update_event: {e}",
+                    )
+                    await bot.session.close()
+                except Exception:
+                    pass
+            await callback.message.answer("Ошибка календаря. Попробуйте позже.")
+            return
+
+        # Success
+        safe_event_id = _escape_markdown_v2(str(event_id))
+        await callback.message.answer(f"Обновлено, event_id={safe_event_id}")
+        await state.clear()
+        logger.info(
+            f"Event updated: {event_id}, title={title}",
+            extra={"request_id": request_id},
+        )
+        return
+
+    # Unknown callback data format
+    logger.warning(
+        f"Unknown callback data format: {callback_data}",
+        extra={"request_id": request_id},
+    )
+
+
+async def cb_confirm_delete(callback: CallbackQuery, state: FSMContext) -> None:
+    """Handle delete confirmation callback.
+
+    Args:
+        callback: Callback query from confirm button.
+        state: FSM context (not used here).
+    """
+    request_id = new_request_id()
+    logger = get_logger("bot")
+    logger.info(f"Delete confirm callback: {callback.data}", extra={"request_id": request_id})
+
+    # Always answer callback
+    await callback.answer()
+
+    callback_data = callback.data
+
+    # Handle decline
+    if callback_data == "cf:delete:decline":
+        await callback.message.answer("Отменено")
+        logger.info("Delete declined", extra={"request_id": request_id})
+        return
+
+    # Handle "Yes" - cf:delete:<event_id>
+    if callback_data.startswith("cf:delete:"):
+        event_id = callback_data.replace("cf:delete:", "")
+
+        # Authenticate and delete event
+        service = CalendarService()
+        try:
+            await service.authenticate()
+        except CalendarAuthError as e:
+            logger.error(
+                f"Calendar auth failed: {e}",
+                extra={"request_id": request_id},
+            )
+            await callback.message.answer("Ошибка аутентификации календаря. Попробуйте позже.")
+            return
+        except CalendarAPIError as e:
+            logger.error(
+                f"Calendar API error during auth: {e}",
+                extra={"request_id": request_id},
+            )
+            await callback.message.answer("Ошибка календаря. Попробуйте позже.")
+            return
+
+        try:
+            await service.delete_event(event_id)
+        except CalendarAuthError as e:
+            logger.error(
+                f"Calendar auth failed in delete_event: {e}",
+                extra={"request_id": request_id},
+            )
+            await callback.message.answer("Ошибка аутентификации календаря. Попробуйте позже.")
+            return
+        except CalendarAPIError as e:
+            logger.error(
+                f"Calendar API error in delete_event: {e}",
+                extra={"request_id": request_id},
+            )
+            if "Event not found" in str(e):
+                await callback.message.answer("Событие не найдено")
+            else:
+                # Notify admin
+                settings = get_settings()
+                if settings.TELEGRAM_ADMIN_ID:
+                    try:
+                        from aiogram import Bot
+                        bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+                        await bot.send_message(
+                            chat_id=settings.TELEGRAM_ADMIN_ID,
+                            text=f"Calendar API error in delete_event: {e}",
+                        )
+                        await bot.session.close()
+                    except Exception:
+                        pass
+                await callback.message.answer("Ошибка календаря. Попробуйте позже.")
+            return
+
+        # Success
+        safe_event_id = _escape_markdown_v2(str(event_id))
+        await callback.message.answer(f"Удалено, event_id={safe_event_id}")
+        logger.info(
+            f"Event deleted: {event_id}",
             extra={"request_id": request_id},
         )
         return
