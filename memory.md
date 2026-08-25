@@ -31,7 +31,7 @@
 | `app/bot/__init__.py` | ✅ DONE (Task 8a) | Экспорт: `WhitelistFilter`, `slots_keyboard`, `confirm_keyboard`, `build_router`. |
 | `app/bot/filters.py` | ✅ DONE (Task 8a) | `WhitelistFilter(BaseFilter)`: проверяет user_id в `get_settings().TELEGRAM_ALLOWED_USER_IDS`, работает для Message и CallbackQuery, логирует warning при отказе. |
 | `app/bot/keyboards.py` | ✅ DONE (Task 8a) | `slots_keyboard(slots: list[dict]) -> InlineKeyboardMarkup` (макс 3 кнопки, callback_data `slot:0..2`), `confirm_keyboard(action: str, payload: str) -> InlineKeyboardMarkup` (Да/Нет, callback_data `cf:<action>:<payload>` / `cf:<action>:decline`, ≤64 байт). |
-| `app/bot/router.py` | ✅ DONE (Task 8a) | `build_router() -> Router`: создаёт Router с WhitelistFilter на message и callback_query. |
+| `app/bot/router.py` | ✅ DONE (Task 8a) | `build_router() -> Router`: создаёт Router с WhitelistFilter на message и callback_query. Зарегистрированы хэндлеры 8b/8c/8d: `cmd_slots`, `cb_slot`, `msg_waiting_title`, `cb_confirm_create`, `cmd_cancel`, `cmd_update`, `msg_waiting_update`, `cb_confirm_update`, `cb_confirm_delete`. |
 
 ### В работе (декомпозировано):
 | Модуль | Статус |
@@ -40,6 +40,7 @@
 | `app/llm/client.py` + `tests/test_llm.py` (Задача 5c) | ✅ DONE |
 | `app/services/calendar_service.py` + `tests/test_calendar_service.py` (Задача 7a) | ✅ DONE |
 | `app/bot/handlers.py` + `tests/test_bot_slots.py` (Задача 8b) | ✅ DONE |
+| `app/bot/handlers.py` + `tests/test_bot_manage.py` (Задача 8d) | ✅ DONE |
 
 ---
 
@@ -256,6 +257,18 @@ Legacy-поля (DIGEST_TIME_HOUR, USER_TIMEZONE, GOOGLE_CREDENTIALS_JSON, REMIN
 **Проблема:** перед стартом задачи в дереве оставались незакоммиченные артефакты (в т.ч. случайно установленный libtmux, .gitignore был модифицирован), что создавало риск загрязнения коммита и ложных срабатываний проверок protected-файлов.
 **Решение:** обязательная ФАЗА 0 для каждой задачи: (1) `pip uninstall -y libtmux`; (2) `git status --porcelain` — НЕЧИСТОЕ дерево по защищённым файлам → СТОП и доклад оркестратору; (3) `pytest -v` — фиксация baseline. .gitignore и protected-файлы восстанавливаются через `git checkout HEAD -- <file>` ДО старта.
 
+### 4.14 Задача 8d: пропуск этапов синхронизации и Commit 2
+**Проблема:** кодер пропустил Этапы A/B/C синхронизации и не сделал отдельный Commit 2 для memory.md (требуется по §7).
+**Решение:** техлид вручную обновляет memory.md после принятия кода: §1 (добавить хэндлеры 8d), §4 (добавить запись о проблеме), §6 (добавить строку истории 8d с реальными SHA + PR).
+
+### 4.15 Галлюцинации кодера в чат-сводках (Задача 8c)
+**Проблема:** кодер фабриковал отчёты о результатах тестов/линтеров без реального запуска.
+**Решение:** приёмка ТОЛЬКО по сырым логам терминала, которые техлид получает сам через `bash` tool. Никакие текстовые отчёты кодера не принимаются на веру.
+
+### 4.16 CDN-кэш raw-URL: верификация только через blob/страницы PR
+**Проблема:** raw.githubusercontent.com может показывать закэшированную версию файлов.
+**Решение:** финальная верификация кода — только через просмотр файлов в workspace (`str_replace_editor view`) или через GitHub PR UI, НЕ через raw URL.
+
 ---
 
 ## 5. ЧЕК-ЛИСТ ПРИЁМКИ ЗАДАЧИ (template отчёта техлида)
@@ -302,9 +315,11 @@ Legacy-поля (DIGEST_TIME_HOUR, USER_TIMEZONE, GOOGLE_CREDENTIALS_JSON, REMIN
 | 7c | find_available_slots + TZ conversion | ✅ DONE | 750ed11b2bbb03d5f41923086cfb430194cb2dfd |
 | 7 | Calendar Service (Google Calendar OAuth2) | ✅ DONE | — |
 | 8a | Bot foundation (whitelist filter, keyboards, router) | ✅ DONE | d4892214b18bfa6695fe7b8d38938b52e7bdd751 |
-| 8a-clean | Очистка артефактов перед стартом 8b | ✅ DONE | 9ae74d6 |
+| 8a-clean | Очистка артефактов перед стартом 8b | ✅ DONE | e138f8e |
 | 8b | /slots command + slot selection flow | ✅ DONE | 9ae74d6 |
-| 8 | Bot Handlers (aiogram routers, whitelist) | ⬜ IN_PROGRESS | — |
+| 8c | Create event with confirmation | ✅ DONE | feb142d |
+| 8d | Update/cancel events with confirmation | ✅ DONE | ce6fa92f42536048fe8c0c2b91cd10e36ddcb419 |
+| 8 | Bot Handlers (aiogram routers, whitelist) | ✅ DONE | — |
 | 9 | Reminder Engine | ⬜ | — |
 | 10 | Scheduler (APScheduler) | ⬜ | — |
 | 11 | Docker | ⬜ | — |
