@@ -2,7 +2,7 @@
 import asyncio
 import json
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -727,3 +727,103 @@ class CalendarService:
                 extra={"request_id": request_id},
             )
             return []
+
+    async def get_upcoming_events(
+        self, time_min: datetime, time_max: datetime
+    ) -> list[dict]:
+        """Получить события в окне [time_min, time_max].
+
+        Args:
+            time_min: Начало окна (aware UTC datetime).
+            time_max: Конец окна (aware UTC datetime).
+
+        Returns:
+            Список событий с ключами:
+            - id: str (event ID)
+            - title: str (summary)
+            - start_time: datetime (aware UTC)
+            - end_time: datetime (aware UTC)
+            - description: str | None
+            - location: str | None
+            
+            All-day события (нет dateTime в start/end) пропускаются с debug-логом.
+
+        Raises:
+            CalendarAuthError: Если не аутентифицирован.
+            CalendarAPIError: Если API-вызов не удался после retry.
+        """
+        request_id = new_request_id()
+        
+        # Убедиться, что datetime aware UTC
+        if time_min.tzinfo is None:
+            time_min = time_min.replace(tzinfo=timezone.utc)
+        if time_max.tzinfo is None:
+            time_max = time_max.replace(tzinfo=timezone.utc)
+        
+        # Формат RFC3339 для Google Calendar API
+        time_min_str = time_min.isoformat().replace("+00:00", "Z")
+        time_max_str = time_max.isoformat().replace("+00:00", "Z")
+        
+        service = await self._get_service()
+        
+        def _list_events():
+            return (
+                service.events()
+                .list(
+                    calendarId=self._settings.GOOGLE_CALENDAR_ID,
+                    timeMin=time_min_str,
+                    timeMax=time_max_str,
+                    singleEvents=True,
+                    orderBy="startTime",
+                )
+                .execute()
+            )
+        
+        try:
+            result = await self._retry_with_backoff(_list_events)
+            items = result.get("items", [])
+            
+            events = []
+            for item in items:
+                start_raw = item.get("start", {})
+                end_raw = item.get("end", {})
+                
+                # Пропустить all-day события
+                if "dateTime" not in start_raw or "dateTime" not in end_raw:
+                    self._logger.debug(
+                        "Skipping all-day event",
+                        extra={"request_id": request_id, "event_id": item.get("id")},
+                    )
+                    continue
+                
+                # Парсинг datetime
+                start_dt = datetime.fromisoformat(start_raw["dateTime"].replace("Z", "+00:00"))
+                end_dt = datetime.fromisoformat(end_raw["dateTime"].replace("Z", "+00:00"))
+                
+                # Конвертация в UTC
+                if start_dt.tzinfo is not None:
+                    start_dt = start_dt.astimezone(timezone.utc)
+                if end_dt.tzinfo is not None:
+                    end_dt = end_dt.astimezone(timezone.utc)
+                
+                events.append({
+                    "id": item.get("id"),
+                    "title": item.get("summary", ""),
+                    "start_time": start_dt,
+                    "end_time": end_dt,
+                    "description": item.get("description"),
+                    "location": item.get("location"),
+                })
+            
+            self._logger.info(
+                f"Retrieved {len(events)} upcoming events",
+                extra={"request_id": request_id},
+            )
+            return events
+        
+        except CalendarAPIError as e:
+            self._logger.error(
+                f"Failed to get upcoming events: {e}",
+                extra={"request_id": request_id},
+            )
+            raise
