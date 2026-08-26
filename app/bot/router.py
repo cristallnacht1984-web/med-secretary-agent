@@ -11,9 +11,14 @@ from app.bot.filters import WhitelistFilter
 from app.bot.handlers import (
     SecretaryStates,
     cb_confirm_create,
+    cb_confirm_delete,
+    cb_confirm_update,
     cb_slot,
+    cmd_cancel,
     cmd_slots,
+    cmd_update,
     msg_waiting_title,
+    msg_waiting_update,
 )
 
 
@@ -41,5 +46,12 @@ def build_router() -> Router:
     from aiogram.filters import StateFilter
     router.message.register(msg_waiting_title, StateFilter(SecretaryStates.waiting_title))
     router.callback_query.register(cb_confirm_create, F.data.startswith("cf:create:"))
+
+    # Register 8d handlers
+    router.message.register(cmd_cancel, Command("cancel"))
+    router.message.register(cmd_update, Command("update"))
+    router.message.register(msg_waiting_update, StateFilter(SecretaryStates.waiting_update_time))
+    router.callback_query.register(cb_confirm_update, F.data.startswith("cf:update:"))
+    router.callback_query.register(cb_confirm_delete, F.data.startswith("cf:delete:"))
 
     return router
