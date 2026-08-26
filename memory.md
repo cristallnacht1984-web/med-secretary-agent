@@ -72,6 +72,8 @@
    - Commit 2: обновление memory.md
    Оба хэша указываются в финальном отчёте.
 
+5. **Push + PR + merge-верификация.** Локальные коммиты не являются основанием приёмки. Перед ACCEPTED техлид проверяет: ветка запушена, PR существует, после мержа коммиты присутствуют в `origin/main` (`git fetch` + `git log origin/main` / GitHub API).
+
 ### Шаг 1: Получение направления от оркестратора
 Оркестратор даёт: номер задачи, цель, архитектурные ограничения, acceptance criteria, список защищённых файлов.
 
@@ -277,6 +279,11 @@ Legacy-поля (DIGEST_TIME_HOUR, USER_TIMEZONE, GOOGLE_CREDENTIALS_JSON, REMIN
 - Полный отчёт с сырыми выводами pytest, coverage, ruff, git diff
 - Два отдельных коммита: Commit 1 (тесты), Commit 2 (memory.md)
 
+### 4.17 Код 8d принят локально, но не попал в main
+**Проблема:** техлид принял задачу 8d по локальным коммитам (`ce6fa92`, `d0cf647`) без push/PR. memory.md обновлён SHA задачи раньше, чем код оказался в main. Обнаружено сетевой верификацией оркестратора: функций 8d в `handlers.py` нет, `test_bot_manage.py` — 404.
+**Причина:** приёмка без проверки существования коммитов вне локального workspace.
+**Решение:** (1) задача считается выполненной только после мержа PR в main; (2) в отчёте техлида обязателен номер PR; (3) memory.md обновляется SHA задачи только когда коммит реально виден на GitHub; (4) восстановление 8d — rebase живой ветки на main + новый PR (8d-RESTORE).
+
 ---
 
 ## 5. ЧЕК-ЛИСТ ПРИЁМКИ ЗАДАЧИ (template отчёта техлида)
@@ -326,7 +333,7 @@ Legacy-поля (DIGEST_TIME_HOUR, USER_TIMEZONE, GOOGLE_CREDENTIALS_JSON, REMIN
 | 8a-clean | Очистка артефактов перед стартом 8b | ✅ DONE | 9ae74d6 |
 | 8b | /slots command + slot selection flow | ✅ DONE | 9ae74d6 |
 | 8c | Create event flow | ✅ DONE | — |
-| 8d | Event management handlers (cancel/update/confirm) | ✅ DONE | — |
+| 8d | update/cancel + confirm (RESTORE) | ⏳ NEEDS FIX (ruff errors, no commits) | 449802a (код), pending (memory) |
 | 8e | Tests for 8d coverage ≥80% | ✅ DONE | 350f34220ca78a9753a5f2420b35507a2ed6944a |
 | 8 | Bot Handlers (aiogram routers, whitelist) | ✅ DONE | — |
 | 9 | Reminder Engine | ⬜ | — |
