@@ -29,6 +29,8 @@
 | `app/services/digest_builder.py` | ✅ DONE | Digest Builder: финальный модуль News Pipeline. API: `build_digest_message(lookback_hours=24, client: LLMClient | None = None) -> str`, `format_digest_markdown(analyses: list[NewsAnalysisBatch], date: datetime) -> str`, `escape_markdown_v2(text: str) -> str`, `send_digest_to_telegram(chat_id: int, message: str, bot: Bot | None = None) -> int`. MarkdownV2-форматирование, retry-логика доставки, graceful failure на LLM-ошибках, DB-логирование. |
 | `app/services/calendar_service.py` | ✅ DONE (Task 7a/7b/7c) | Calendar Service OAuth2: аутентификация Google Calendar API через OAuth2, auto-refresh токенов. API: `CalendarService(settings)`, `authenticate()`, `_get_service()`, `CalendarAuthError`, `CalendarAPIError`. CRUD операции: `create_event(summary, start_time, end_time, description?, location?, timezone?) -> event_id`, `get_event(event_id) -> dict`, `update_event(event_id, summary?, start_time?, end_time?, description?, location?) -> event_id`, `delete_event(event_id)`. Retry с exponential backoff (base_delay=1s, 2^attempt, max_retries=3) на 5xx/429/timeout, без retry на 4xx. Scope: `calendar.events.readwrite`. Async-first с `asyncio.to_thread()` для sync Google SDK. **Task 7c:** `find_available_slots(date, duration_minutes=60, max_slots=3, working_hours=(9,18)) -> list[dict]`, хелперы `_convert_utc_to_user_tz(utc_dt)`, `_convert_user_tz_to_utc(user_dt)`, `_format_for_display(utc_dt)`. TZ из `settings.TIMEZONE`, interval merge, graceful failure → []. **Task 9-prep:** `get_upcoming_events(time_min, time_max) -> list[dict]` — полл событий в окне [time_min, time_max], возврат ключей: id, title, start_time (UTC), end_time (UTC), description, location. All-day события пропускаются с debug-логом. |
 | `app/services/reminder_engine.py` | ✅ DONE | `ReminderEngine.poll_and_remind() -> int`, окно 30–60 мин, дедуп через `ReminderLog`, retry TG 3×, MarkdownV2 |
+| `app/scheduler.py` | ✅ DONE (Task 10) | APScheduler async: `build_scheduler() -> AsyncIOScheduler` (digest cron + reminder interval), `run_digest_job()`, `run_reminder_job()`. Graceful shutdown via `scheduler.shutdown(wait=True)`. |
+| `tests/test_scheduler.py` | ✅ DONE (Task 10) | 17 тестов: build_scheduler, triggers, jobs config, run_digest_job (empty/non-empty/exception), run_reminder_job, shutdown. Coverage ≥80%. |
 | `app/bot/__init__.py` | ✅ DONE (Task 8a) | Экспорт: `WhitelistFilter`, `slots_keyboard`, `confirm_keyboard`, `build_router`. |
 | `app/bot/filters.py` | ✅ DONE (Task 8a) | `WhitelistFilter(BaseFilter)`: проверяет user_id в `get_settings().TELEGRAM_ALLOWED_USER_IDS`, работает для Message и CallbackQuery, логирует warning при отказе. |
 | `app/bot/keyboards.py` | ✅ DONE (Task 8a) | `slots_keyboard(slots: list[dict]) -> InlineKeyboardMarkup` (макс 3 кнопки, callback_data `slot:0..2`), `confirm_keyboard(action: str, payload: str) -> InlineKeyboardMarkup` (Да/Нет, callback_data `cf:<action>:<payload>` / `cf:<action>:decline`, ≤64 байт). |
@@ -359,7 +361,7 @@ Legacy-поля (DIGEST_TIME_HOUR, USER_TIMEZONE, GOOGLE_CREDENTIALS_JSON, REMIN
 | 8 | Bot Handlers (aiogram routers, whitelist) | ✅ DONE | — |
 | 9-prep | add get_upcoming_events to CalendarService | ✅ DONE | (Фаза 1 откатана — изменения ruff --fix) |
 | 9 | Reminder Engine + тесты | ✅ DONE | d2242be76f837ad6da838d698f03c20419ecdc50 |
-| 10 | Scheduler (APScheduler) | ⬜ | — |
+| 10 | Scheduler (APScheduler) | ✅ DONE | e1d3cb2ee5f916bbf9603fba4cef1db90602dd40 |
 | 11 | Docker | ⬜ | — |
 | 12 | Финальная приёмка TZ §6 | ⬜ | — |
 
