@@ -27,7 +27,8 @@
 | `app/services/rss_fetcher.py` | ✅ DONE | Async RSS fetch 10 feeds (TZ App А), aiohttp+feedparser, retry/backoff (3 attempts, 1s base), graceful failure (source failure ≠ digest abort), RawArticle dataclass, UTC filtering. API: `fetch_all_feeds(lookback_hours=24)`, `fetch_single_feed(url, source, region)`, `RawArticle`, `FeedFetchError`, `RSS_FEEDS` |
 | `app/services/news_pipeline.py` | ✅ DONE | News Pipeline: дедупликация по URL+title_hash (MD5), окно 7 дней, батчи NEWS_BATCH_MIN/MAX (3–5). API: `deduplicate_articles(articles) -> list[RawArticle]`, `build_batches(articles) -> list[list[RawArticle]]`, `prepare_batches_for_analysis(lookback_hours=24) -> list[list[dict]]`. Graceful degradation при ошибке БД → return [] + log error. |
 | `app/services/digest_builder.py` | ✅ DONE | Digest Builder: финальный модуль News Pipeline. API: `build_digest_message(lookback_hours=24, client: LLMClient | None = None) -> str`, `format_digest_markdown(analyses: list[NewsAnalysisBatch], date: datetime) -> str`, `escape_markdown_v2(text: str) -> str`, `send_digest_to_telegram(chat_id: int, message: str, bot: Bot | None = None) -> int`. MarkdownV2-форматирование, retry-логика доставки, graceful failure на LLM-ошибках, DB-логирование. |
-| `app/services/calendar_service.py` | ✅ DONE (Task 7a/7b/7c) | Calendar Service OAuth2: аутентификация Google Calendar API через OAuth2, auto-refresh токенов. API: `CalendarService(settings)`, `authenticate()`, `_get_service()`, `CalendarAuthError`, `CalendarAPIError`. CRUD операции: `create_event(summary, start_time, end_time, description?, location?, timezone?) -> event_id`, `get_event(event_id) -> dict`, `update_event(event_id, summary?, start_time?, end_time?, description?, location?) -> event_id`, `delete_event(event_id)`. Retry с exponential backoff (base_delay=1s, 2^attempt, max_retries=3) на 5xx/429/timeout, без retry на 4xx. Scope: `calendar.events.readwrite`. Async-first с `asyncio.to_thread()` для sync Google SDK. **Task 7c:** `find_available_slots(date, duration_minutes=60, max_slots=3, working_hours=(9,18)) -> list[dict]`, хелперы `_convert_utc_to_user_tz(utc_dt)`, `_convert_user_tz_to_utc(user_dt)`, `_format_for_display(utc_dt)`. TZ из `settings.TIMEZONE`, interval merge, graceful failure → []. |
+| `app/services/calendar_service.py` | ✅ DONE (Task 7a/7b/7c) | Calendar Service OAuth2: аутентификация Google Calendar API через OAuth2, auto-refresh токенов. API: `CalendarService(settings)`, `authenticate()`, `_get_service()`, `CalendarAuthError`, `CalendarAPIError`. CRUD операции: `create_event(summary, start_time, end_time, description?, location?, timezone?) -> event_id`, `get_event(event_id) -> dict`, `update_event(event_id, summary?, start_time?, end_time?, description?, location?) -> event_id`, `delete_event(event_id)`. Retry с exponential backoff (base_delay=1s, 2^attempt, max_retries=3) на 5xx/429/timeout, без retry на 4xx. Scope: `calendar.events.readwrite`. Async-first с `asyncio.to_thread()` для sync Google SDK. **Task 7c:** `find_available_slots(date, duration_minutes=60, max_slots=3, working_hours=(9,18)) -> list[dict]`, хелперы `_convert_utc_to_user_tz(utc_dt)`, `_convert_user_tz_to_utc(user_dt)`, `_format_for_display(utc_dt)`. TZ из `settings.TIMEZONE`, interval merge, graceful failure → []. **Task 9-prep:** `get_upcoming_events(time_min, time_max) -> list[dict]` — полл событий в окне [time_min, time_max], возврат ключей: id, title, start_time (UTC), end_time (UTC), description, location. All-day события пропускаются с debug-логом. |
+| `app/services/reminder_engine.py` | ✅ DONE | `ReminderEngine.poll_and_remind() -> int`, окно 30–60 мин, дедуп через `ReminderLog`, retry TG 3×, MarkdownV2 |
 | `app/bot/__init__.py` | ✅ DONE (Task 8a) | Экспорт: `WhitelistFilter`, `slots_keyboard`, `confirm_keyboard`, `build_router`. |
 | `app/bot/filters.py` | ✅ DONE (Task 8a) | `WhitelistFilter(BaseFilter)`: проверяет user_id в `get_settings().TELEGRAM_ALLOWED_USER_IDS`, работает для Message и CallbackQuery, логирует warning при отказе. |
 | `app/bot/keyboards.py` | ✅ DONE (Task 8a) | `slots_keyboard(slots: list[dict]) -> InlineKeyboardMarkup` (макс 3 кнопки, callback_data `slot:0..2`), `confirm_keyboard(action: str, payload: str) -> InlineKeyboardMarkup` (Да/Нет, callback_data `cf:<action>:<payload>` / `cf:<action>:decline`, ≤64 байт). |
@@ -284,6 +285,26 @@ Legacy-поля (DIGEST_TIME_HOUR, USER_TIMEZONE, GOOGLE_CREDENTIALS_JSON, REMIN
 **Причина:** приёмка без проверки существования коммитов вне локального workspace.
 **Решение:** (1) задача считается выполненной только после мержа PR в main; (2) в отчёте техлида обязателен номер PR; (3) memory.md обновляется SHA задачи только когда коммит реально виден на GitHub; (4) восстановление 8d — rebase живой ветки на main + новый PR (8d-RESTORE).
 
+### 4.18 Sandbox без origin remote (Задача 9)
+**Проблема:** sandbox физически не имеет remote origin, шаг «проверить origin/main» из §2.5 невыполним внутри сессии.
+**Решение:** merge-верификация делегирована оркестратору. Техлид в отчёте указывает имя ветки + полные SHA коммитов. Оркестратор проверяет merge через веб-интерфейс после публикации PR.
+
+### 4.19 __pycache__ в git индексе (PR #24)
+**Проблема:** коммит `449802a` (PR #24) случайно закоммитил бинарники `__pycache__` в main. В любом свежем workspace они показываются как `M` в `git status`.
+**Решение:** chore-коммит для untrack + правило «никогда `git add .`/`-A` — только явные пути из белого списка».
+
+### 4.20 get_session() — голый асинхронный генератор (Задача 9)
+**Проблема:** `get_session()` в `app/db/database.py` — голый асинхронный генератор без `@asynccontextmanager`. Использование через `async with` вызывает ошибку.
+**Решение:** В продакшен-коде использовать через `async for session in get_session():` (паттерн из `digest_builder`). Мок в тестах: асинхронный генератор с `yield` + обязательный патч `Repository`.
+
+### 4.21 Мокирование БД в тестах (Задача 9)
+**Проблема:** При мокировании только `get_session` реальный `Repository(session=AsyncMock)` даёт `was_reminder_sent` → всегда `True` (`AsyncMock is not None`).
+**Решение:** Обязательно патчить и `get_session` (как async generator с `yield`), и `Repository` (конструктор).
+
+### 4.22 TelegramAPIError сигнатура (Задача 9)
+**Проблема:** `TelegramAPIError` из `aiogram.exceptions` требует два позиционных аргумента.
+**Решение:** Использовать `TelegramAPIError(method=TelegramMethod, message="...")` при создании исключений в тестах.
+
 ---
 
 ## 5. ЧЕК-ЛИСТ ПРИЁМКИ ЗАДАЧИ (template отчёта техлида)
@@ -336,7 +357,8 @@ Legacy-поля (DIGEST_TIME_HOUR, USER_TIMEZONE, GOOGLE_CREDENTIALS_JSON, REMIN
 | 8d | update/cancel + confirm (RESTORE) | ⏳ NEEDS FIX (ruff errors, no commits) | 449802a (код), pending (memory) |
 | 8e | Tests for 8d coverage ≥80% | ✅ DONE | 350f34220ca78a9753a5f2420b35507a2ed6944a |
 | 8 | Bot Handlers (aiogram routers, whitelist) | ✅ DONE | — |
-| 9 | Reminder Engine | ⬜ | — |
+| 9-prep | add get_upcoming_events to CalendarService | ✅ DONE | (Фаза 1 откатана — изменения ruff --fix) |
+| 9 | Reminder Engine + тесты | ✅ DONE | d2242be76f837ad6da838d698f03c20419ecdc50 |
 | 10 | Scheduler (APScheduler) | ⬜ | — |
 | 11 | Docker | ⬜ | — |
 | 12 | Финальная приёмка TZ §6 | ⬜ | — |

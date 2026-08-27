@@ -1580,3 +1580,178 @@ class TestFindAvailableSlots:
             assert "end" in slot
             assert "start_display" in slot
             assert "end_display" in slot
+
+
+class TestGetUpcomingEvents:
+    """Test get_upcoming_events method."""
+
+    @pytest.mark.asyncio
+    async def test_parse_keys_from_api(self, mock_settings):
+        """Test API returns items with dateTime → correct keys in result."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        mock_events = MagicMock()
+        mock_list = MagicMock()
+        mock_list.execute.return_value = {
+            "items": [
+                {
+                    "id": "evt1",
+                    "summary": "Test Event",
+                    "start": {"dateTime": "2025-01-15T10:00:00Z"},
+                    "end": {"dateTime": "2025-01-15T11:00:00Z"},
+                    "description": "Test description",
+                    "location": "Test location",
+                }
+            ]
+        }
+        mock_events.list.return_value = mock_list
+        service._service.events.return_value = mock_events
+
+        time_min = datetime(2025, 1, 15, 9, 0, tzinfo=timezone.utc)
+        time_max = datetime(2025, 1, 15, 18, 0, tzinfo=timezone.utc)
+        events = await service.get_upcoming_events(time_min, time_max)
+
+        assert len(events) == 1
+        event = events[0]
+        assert event["id"] == "evt1"
+        assert event["title"] == "Test Event"
+        assert event["start_time"] == datetime(2025, 1, 15, 10, 0, tzinfo=timezone.utc)
+        assert event["end_time"] == datetime(2025, 1, 15, 11, 0, tzinfo=timezone.utc)
+        assert event["description"] == "Test description"
+        assert event["location"] == "Test location"
+
+    @pytest.mark.asyncio
+    async def test_empty_items_returns_empty_list(self, mock_settings):
+        """Test empty items → empty list."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        mock_events = MagicMock()
+        mock_list = MagicMock()
+        mock_list.execute.return_value = {"items": []}
+        mock_events.list.return_value = mock_list
+        service._service.events.return_value = mock_events
+
+        time_min = datetime(2025, 1, 15, 9, 0, tzinfo=timezone.utc)
+        time_max = datetime(2025, 1, 15, 18, 0, tzinfo=timezone.utc)
+        events = await service.get_upcoming_events(time_min, time_max)
+
+        assert events == []
+
+    @pytest.mark.asyncio
+    async def test_all_day_event_skipped_with_debug_log(self, mock_settings, caplog):
+        """Test all-day event (no dateTime) → skipped with debug log."""
+        import logging
+        from app.logging_setup import get_logger
+
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        mock_events = MagicMock()
+        mock_list = MagicMock()
+        mock_list.execute.return_value = {
+            "items": [
+                {
+                    "id": "allday_evt",
+                    "summary": "All Day Event",
+                    "start": {"date": "2025-01-15"},
+                    "end": {"date": "2025-01-16"},
+                }
+            ]
+        }
+        mock_events.list.return_value = mock_list
+        service._service.events.return_value = mock_events
+
+        time_min = datetime(2025, 1, 15, 9, 0, tzinfo=timezone.utc)
+        time_max = datetime(2025, 1, 15, 18, 0, tzinfo=timezone.utc)
+        events = await service.get_upcoming_events(time_min, time_max)
+
+        assert events == []
+
+    @pytest.mark.asyncio
+    async def test_retry_on_5xx_error(self, mock_settings):
+        """Test retry on 5xx: first attempt HttpError 500, second success."""
+        from googleapiclient.errors import HttpError
+
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        mock_events = MagicMock()
+        mock_list = MagicMock()
+
+        # First call raises 500, second succeeds
+        error_response = type("obj", (object,), {"status": 500, "reason": "Internal Server Error"})()
+        http_error = HttpError(error_response, b"500 error")
+
+        call_count = [0]
+
+        def execute_side_effect():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise http_error
+            return {
+                "items": [
+                    {
+                        "id": "evt1",
+                        "summary": "Retried Event",
+                        "start": {"dateTime": "2025-01-15T10:00:00Z"},
+                        "end": {"dateTime": "2025-01-15T11:00:00Z"},
+                    }
+                ]
+            }
+
+        mock_list.execute.side_effect = execute_side_effect
+        mock_events.list.return_value = mock_list
+        service._service.events.return_value = mock_events
+
+        time_min = datetime(2025, 1, 15, 9, 0, tzinfo=timezone.utc)
+        time_max = datetime(2025, 1, 15, 18, 0, tzinfo=timezone.utc)
+        events = await service.get_upcoming_events(time_min, time_max)
+
+        assert len(events) == 1
+        assert call_count[0] == 2
+
+    @pytest.mark.asyncio
+    async def test_calendar_auth_error_propagates(self, mock_settings):
+        """Test CalendarAuthError propagates from _get_service."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = None  # Not authenticated
+
+        time_min = datetime(2025, 1, 15, 9, 0, tzinfo=timezone.utc)
+        time_max = datetime(2025, 1, 15, 18, 0, tzinfo=timezone.utc)
+
+        with pytest.raises(CalendarAuthError):
+            await service.get_upcoming_events(time_min, time_max)
+
+    @pytest.mark.asyncio
+    async def test_time_min_max_rfc3339_format_with_z(self, mock_settings):
+        """Test timeMin/timeMax are formatted as RFC3339 with Z."""
+        service = CalendarService(settings=mock_settings)
+        service._credentials = MagicMock(valid=True)
+        service._service = MagicMock()
+
+        captured_args = {}
+
+        def capture_list(calendarId, timeMin, timeMax, **kwargs):
+            captured_args["timeMin"] = timeMin
+            captured_args["timeMax"] = timeMax
+            mock_list = MagicMock()
+            mock_list.execute.return_value = {"items": []}
+            return mock_list
+
+        mock_events = MagicMock()
+        mock_events.list.side_effect = lambda **kw: capture_list(**kw)
+        service._service.events.return_value = mock_events
+
+        time_min = datetime(2025, 1, 15, 9, 0, tzinfo=timezone.utc)
+        time_max = datetime(2025, 1, 15, 18, 0, tzinfo=timezone.utc)
+        await service.get_upcoming_events(time_min, time_max)
+
+        # Should end with Z (RFC3339 UTC format)
+        assert captured_args["timeMin"].endswith("Z")
+        assert captured_args["timeMax"].endswith("Z")
