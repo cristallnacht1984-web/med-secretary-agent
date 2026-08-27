@@ -13,6 +13,7 @@ from app.services.news_pipeline import (
     deduplicate_articles,
     prepare_batches_for_analysis,
 )
+from app.services.reminder_engine import ReminderEngine
 from app.services.rss_fetcher import (
     RSS_FEEDS,
     FeedFetchError,
@@ -38,4 +39,5 @@ __all__ = [
     "send_digest_to_telegram",
     "CalendarService",
     "CalendarAuthError",
+    "ReminderEngine",
 ]
