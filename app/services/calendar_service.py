@@ -756,9 +756,9 @@ class CalendarService:
         
         # Убедиться, что datetime aware UTC
         if time_min.tzinfo is None:
-            time_min = time_min.replace(tzinfo=timezone.utc)
+            time_min = time_min.replace(tzinfo=UTC)
         if time_max.tzinfo is None:
-            time_max = time_max.replace(tzinfo=timezone.utc)
+            time_max = time_max.replace(tzinfo=UTC)
         
         # Формат RFC3339 для Google Calendar API
         time_min_str = time_min.isoformat().replace("+00:00", "Z")
@@ -802,9 +802,9 @@ class CalendarService:
                 
                 # Конвертация в UTC
                 if start_dt.tzinfo is not None:
-                    start_dt = start_dt.astimezone(timezone.utc)
+                    start_dt = start_dt.astimezone(UTC)
                 if end_dt.tzinfo is not None:
-                    end_dt = end_dt.astimezone(timezone.utc)
+                    end_dt = end_dt.astimezone(UTC)
                 
                 events.append({
                     "id": item.get("id"),
