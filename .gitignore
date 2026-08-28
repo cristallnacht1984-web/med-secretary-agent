@@ -1,46 +1,49 @@
 ```
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
+*.pyc
+*.pyo
+*.pyd
+*.py~
+*.py.class
+*.pyc.class
+*.pyo.class
 *.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
+*.dist-info/
 
-# Environment
+# Build artifacts
+build/
+dist/
+*.egg
+*.whl
+*.zip
+*.tar.gz
+*.tar.bz2
+
+# Dependencies
+.venv/
+venv/
 .env
 .env.local
 .env.*
-.venv/
-venv/
-ENV/
 
-# IDE
+# Editors
 .vscode/
 .idea/
 *.swp
 *.swo
-*.tmp
+*~
 
 # Logs
 *.log
 
+# OS
+.DS_Store
+Thumbs.db
+
 # Coverage
 .coverage
-coverage/
 htmlcov/
+coverage/
 ```
