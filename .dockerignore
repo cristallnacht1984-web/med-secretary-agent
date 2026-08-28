@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.git/
+.gitignore
+tests/
+.coverage
+.pytest_cache/
+.env
+*.egg-info/
+data/
+logs/
+memory.md
+TZ.md
+AGENTS.md

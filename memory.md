@@ -37,6 +37,11 @@
 | `app/bot/router.py` | ✅ DONE (Task 8a) | `build_router() -> Router`: создаёт Router с WhitelistFilter на message и callback_query. |
 | `main.py` | ✅ DONE (Task 11a) | Entry point: STARTUP ORDER (Settings → Logging → Health → DB → Bot → Scheduler → Polling). Graceful shutdown via `_graceful_shutdown` (scheduler → bot → health → db). Signals via `asyncio.Event` + `loop.add_signal_handler`. API: `async def main() -> None`. |
 
+| `Dockerfile` | ✅ DONE | python:3.12-slim, non-root appuser, HEALTHCHECK urllib /health, EXPOSE 8080 |
+| `docker-compose.yml` | ✅ DONE | restart: unless-stopped, env_file .env, volumes ./data:/app/data + ./logs:/app/logs |
+| `.dockerignore` | ✅ DONE | Исключает .env, tests/, __pycache__, data/, logs/, TZ.md, AGENTS.md |
+| `tests/test_docker_artifacts.py` | ✅ DONE | Статическая валидация Docker-артефактов (12 тестов) |
+
 ### В работе (декомпозировано):
 | Модуль | Статус |
 |---|---|
