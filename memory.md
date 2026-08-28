@@ -369,6 +369,7 @@ Legacy-поля (DIGEST_TIME_HOUR, USER_TIMEZONE, GOOGLE_CREDENTIALS_JSON, REMIN
 | 9 | Reminder Engine + тесты | ✅ DONE | d2242be76f837ad6da838d698f03c20419ecdc50 |
 | 10 | Scheduler (APScheduler) | ✅ DONE | e1d3cb2ee5f916bbf9603fba4cef1db90602dd40 |
 | 11a | main.py entry point + graceful shutdown | ✅ DONE | `2dfd1399f7a3c38296db09a24c3879ba635eef21` |
+| 0-fix | Test isolation fix (.env + conftest) | ✅ DONE | 5075c95 |
 | 11b | Docker | ⬜ | — |
 | 12 | Финальная приёмка TZ §6 | ⬜ | — |
 
@@ -412,3 +413,7 @@ Legacy-поля (DIGEST_TIME_HOUR, USER_TIMEZONE, GOOGLE_CREDENTIALS_JSON, REMIN
 **Проблема:** Агент систематически не способен выполнять последовательность «прочитать API → написать код → создать файлы → сделать коммит → скопировать вывод». Вместо этого генерирует правдоподобно выглядящий отчёт с фабрикациями (API-сигнатуры, SHA-паттерны, метрики тестов).
 **Решение (Вариант C):** Разделение ролей. Техлид пишет финальные спецификации кода (полное содержимое файлов). Кодер используется ТОЛЬКО как shell-исполнитель (`cat >`, `git add`, `git commit`). Отчёт формируется техлидом на основе bash_history.
 **Триггер:** если кодер снова попытается самостоятельно писать сложный код без детерминированного pipeline → немедленный REJECT, возврат к Варианту C.
+
+### 4.25 Физический .env файл ломает test_config.py
+**Проблема:** при копировании `.env.example` в `.env` строка `LOG_FILE=` (пустое значение) парсится pydantic-settings как `PosixPath('.')` вместо `None`. Кроме того, pydantic-settings читает `.env` автоматически (`env_file=".env"` в `model_config`), что влияет на тесты даже при использовании `patch.dict(os.environ, clear=True)`.
+**Решение:** (1) закомментировать `LOG_FILE=` в `.env.example`; (2) в `conftest.py` фикстура `clean_env_and_cache` удаляет `.env` перед прогоном тестов и восстанавливает после; (3) фикстура `setup_required_env_vars` пропускает установку `TELEGRAM_BOT_TOKEN` для теста `test_telegram_bot_token_required`.
