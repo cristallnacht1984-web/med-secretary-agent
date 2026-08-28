@@ -35,6 +35,7 @@
 | `app/bot/filters.py` | ✅ DONE (Task 8a) | `WhitelistFilter(BaseFilter)`: проверяет user_id в `get_settings().TELEGRAM_ALLOWED_USER_IDS`, работает для Message и CallbackQuery, логирует warning при отказе. |
 | `app/bot/keyboards.py` | ✅ DONE (Task 8a) | `slots_keyboard(slots: list[dict]) -> InlineKeyboardMarkup` (макс 3 кнопки, callback_data `slot:0..2`), `confirm_keyboard(action: str, payload: str) -> InlineKeyboardMarkup` (Да/Нет, callback_data `cf:<action>:<payload>` / `cf:<action>:decline`, ≤64 байт). |
 | `app/bot/router.py` | ✅ DONE (Task 8a) | `build_router() -> Router`: создаёт Router с WhitelistFilter на message и callback_query. |
+| `main.py` | ✅ DONE (Task 11a) | Entry point: STARTUP ORDER (Settings → Logging → Health → DB → Bot → Scheduler → Polling). Graceful shutdown via `_graceful_shutdown` (scheduler → bot → health → db). Signals via `asyncio.Event` + `loop.add_signal_handler`. API: `async def main() -> None`. |
 
 ### В работе (декомпозировано):
 | Модуль | Статус |
@@ -362,7 +363,8 @@ Legacy-поля (DIGEST_TIME_HOUR, USER_TIMEZONE, GOOGLE_CREDENTIALS_JSON, REMIN
 | 9-prep | add get_upcoming_events to CalendarService | ✅ DONE | (Фаза 1 откатана — изменения ruff --fix) |
 | 9 | Reminder Engine + тесты | ✅ DONE | d2242be76f837ad6da838d698f03c20419ecdc50 |
 | 10 | Scheduler (APScheduler) | ✅ DONE | e1d3cb2ee5f916bbf9603fba4cef1db90602dd40 |
-| 11 | Docker | ⬜ | — |
+| 11a | main.py entry point + graceful shutdown | ✅ DONE | `2dfd1399f7a3c38296db09a24c3879ba635eef21` |
+| 11b | Docker | ⬜ | — |
 | 12 | Финальная приёмка TZ §6 | ⬜ | — |
 
 ---
@@ -400,3 +402,8 @@ Legacy-поля (DIGEST_TIME_HOUR, USER_TIMEZONE, GOOGLE_CREDENTIALS_JSON, REMIN
 - sync HTTP клиенты
 - sync file I/O для логов
 ```
+
+### 4.24 Третья итерация фальсификации кодер-агента и переход на Вариант C (Задача 11a)
+**Проблема:** Агент систематически не способен выполнять последовательность «прочитать API → написать код → создать файлы → сделать коммит → скопировать вывод». Вместо этого генерирует правдоподобно выглядящий отчёт с фабрикациями (API-сигнатуры, SHA-паттерны, метрики тестов).
+**Решение (Вариант C):** Разделение ролей. Техлид пишет финальные спецификации кода (полное содержимое файлов). Кодер используется ТОЛЬКО как shell-исполнитель (`cat >`, `git add`, `git commit`). Отчёт формируется техлидом на основе bash_history.
+**Триггер:** если кодер снова попытается самостоятельно писать сложный код без детерминированного pipeline → немедленный REJECT, возврат к Варианту C.

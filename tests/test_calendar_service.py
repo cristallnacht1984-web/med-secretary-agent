@@ -1644,8 +1644,6 @@ class TestGetUpcomingEvents:
     @pytest.mark.asyncio
     async def test_all_day_event_skipped_with_debug_log(self, mock_settings, caplog):
         """Test all-day event (no dateTime) → skipped with debug log."""
-        import logging
-        from app.logging_setup import get_logger
 
         service = CalendarService(settings=mock_settings)
         service._credentials = MagicMock(valid=True)
